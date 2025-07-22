@@ -1,0 +1,49 @@
+services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.26.3
+    restart: on-failure:0
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      ENABLE_MODULES: ''
+      CLUSTER_HOSTNAME: 'node1'
+    healthcheck:
+      test: wget --no-verbose --tries=3 --spider http://localhost:8080/v1/.well-known/ready || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - WEAVIATE_URL=http://weaviate:8080
+      - FASTAPI_HOST=0.0.0.0
+      - FASTAPI_PORT=8000
+      - ENABLE_FILE_LOGGING=false
+    env_file:
+      - .env
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs:rw
+    healthcheck:
+      test: curl -f http://localhost:8000/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  weaviate_data: 
