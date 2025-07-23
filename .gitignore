@@ -57,3 +57,5 @@ temp/
 
 # Old requirements with conflicts (backup)
 requirements_old_with_conflicts.txt
+
+old/

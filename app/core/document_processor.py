@@ -5,8 +5,9 @@ import time
 from typing import Dict, List, Any, Optional
 from PyPDF2 import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import os
+from google import genai
+from google.genai import types
 
 from app.utils.logger import get_logger
 
@@ -16,19 +17,27 @@ class DocumentProcessor:
     """Handles PDF processing with parent-child chunking strategy."""
     
     def __init__(self):
-        self.parent_chunk_size = 3000  # Plus gros pour moins de chunks
-        self.parent_overlap = 200
-        self.child_chunk_size = 1000   # Plus gros pour moins d'appels API
-        self.child_overlap = 100
+        # Use config values for chunk sizes
+        from app.config import PARENT_CHUNK_SIZE, PARENT_CHUNK_OVERLAP, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP
+        self.parent_chunk_size = PARENT_CHUNK_SIZE
+        self.parent_overlap = PARENT_CHUNK_OVERLAP
+        self.child_chunk_size = CHILD_CHUNK_SIZE
+        self.child_overlap = CHILD_CHUNK_OVERLAP
         
         # Parent chunk store (in-memory for rapid context retrieval)
         self.parent_store: Dict[str, str] = {}
         
-        # Initialize Gemini embeddings
-        self.embeddings = GoogleGenerativeAIEmbeddings(
-            model="gemini-embedding-001",
-            google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
+        # Initialize Gemini client for embeddings
+        self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+        # Use the same embedding model as defined in config for consistency
+        from app.config import EMBEDDING_MODEL
+        self.embedding_model = EMBEDDING_MODEL
+        
+        # Rate limiting for API calls
+        from app.config import ENABLE_RATE_LIMITING, EMBEDDING_REQUEST_DELAY
+        self.rate_limiting_enabled = ENABLE_RATE_LIMITING
+        self.request_delay = EMBEDDING_REQUEST_DELAY
+        self.last_request_time = 0
         
         # Text splitters
         self.parent_splitter = RecursiveCharacterTextSplitter(
@@ -100,7 +109,7 @@ class DocumentProcessor:
                 })
                 
                 # Generate embedding for child chunk
-                embedding = await self._generate_embedding(child_chunk)
+                embedding = await self._generate_embedding_with_retry(child_chunk)
                 
                 child_chunks_data.append({
                     "id": child_id,
@@ -121,12 +130,32 @@ class DocumentProcessor:
             "total_embedding_calls": len(child_chunks_data)
         })
         
+        # Collect parent chunks data for storage
+        parent_chunks_data = []
+        for parent_idx, parent_chunk in enumerate(parent_chunks):
+            # Find the parent_id for this parent chunk by looking at the first child chunk
+            parent_id = None
+            for child_data in child_chunks_data:
+                if child_data["parent_index"] == parent_idx:
+                    parent_id = child_data["parent_id"]
+                    break
+            
+            if parent_id:
+                parent_chunks_data.append({
+                    "id": parent_id,
+                    "content": parent_chunk,
+                    "document_id": document_id,
+                    "filename": filename,
+                    "parent_index": parent_idx
+                })
+        
         return {
             "document_id": document_id,
             "filename": filename,
             "parent_chunk_count": len(parent_chunks),
             "child_chunk_count": len(child_chunks_data),
-            "child_chunks": child_chunks_data
+            "child_chunks": child_chunks_data,
+            "parent_chunks": parent_chunks_data  # Add parent chunks data
         }
     
     def _extract_text_from_pdf(self, content: bytes) -> str:
@@ -142,32 +171,44 @@ class DocumentProcessor:
         
         return text.strip()
     
-    async def _generate_embedding(self, text: str) -> List[float]:
-        """Generate embedding using Gemini embedding model with rate limiting."""
-        max_retries = 5
-        base_delay = 1  # Start with 1 second delay
-        
-        logger.debug("Starting embedding generation", extra={
-            "text_preview": text[:100] + "..." if len(text) > 100 else text,
-            "text_length": len(text)
-        })
+    async def _generate_embedding_with_retry(self, text: str) -> List[float]:
+        """Generate embedding with retry logic and rate limiting."""
+        from app.config import EMBEDDING_MAX_RETRIES, EMBEDDING_RETRY_BASE_DELAY
+        max_retries = EMBEDDING_MAX_RETRIES
+        base_delay = EMBEDDING_RETRY_BASE_DELAY
         
         for attempt in range(max_retries):
             try:
-                # Add delay between requests to respect rate limits (100 RPM = 0.6s between requests)
-                if attempt > 0:
-                    delay = base_delay * (2 ** attempt)  # Exponential backoff
-                    logger.info("Retrying with exponential backoff", extra={
-                        "attempt": attempt + 1,
-                        "delay_seconds": delay,
-                        "max_retries": max_retries
-                    })
-                    await asyncio.sleep(delay)
-                else:
-                    logger.debug("Applying base rate limiting delay (0.6s)")
-                    await asyncio.sleep(0.6)  # Base delay for rate limiting
+                # Rate limiting: ensure we don't exceed API limits
+                if self.rate_limiting_enabled:
+                    current_time = time.time()
+                    time_since_last = current_time - self.last_request_time
+                    
+                    if time_since_last < self.request_delay:
+                        sleep_time = self.request_delay - time_since_last
+                        logger.info(f"Rate limiting: sleeping {sleep_time:.1f}s before embedding request")
+                        await asyncio.sleep(sleep_time)
+                    
+                    self.last_request_time = time.time()
                 
-                embedding = await self.embeddings.aembed_query(text)
+                logger.debug(f"Generating embedding (attempt {attempt + 1}/{max_retries})")
+                
+                response = await self.client.aio.models.embed_content(
+                    model=self.embedding_model,
+                    contents=text,
+                    config=types.EmbedContentConfig(
+                        task_type="RETRIEVAL_DOCUMENT",
+                        output_dimensionality=768  # Fix dimension for consistency
+                    )
+                )
+                
+                # Extract embedding values
+                if hasattr(response, 'embeddings') and response.embeddings:
+                    embedding = list(response.embeddings[0].values)
+                elif hasattr(response, 'embedding'):
+                    embedding = list(response.embedding.values)
+                else:
+                    raise ValueError("Unexpected embedding response structure")
                 
                 logger.debug("Embedding generated successfully", extra={
                     "embedding_dimensions": len(embedding),
@@ -184,11 +225,15 @@ class DocumentProcessor:
                     "error_type": type(e).__name__
                 })
                 
-                # Check if it's a rate limit error
+                # Check if it's a rate limit or quota error
                 if "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
                     if attempt < max_retries - 1:
+                        # Exponential backoff with longer delays for quota issues
                         delay = base_delay * (2 ** attempt)
-                        logger.warning("Rate limit hit, will retry", extra={
+                        if "quota" in error_msg:
+                            delay = max(delay, 60)  # At least 1 minute for quota issues
+                        
+                        logger.warning("API rate/quota limit hit, will retry", extra={
                             "attempt": attempt + 1,
                             "max_retries": max_retries,
                             "retry_delay": delay,
@@ -203,7 +248,7 @@ class DocumentProcessor:
                     "max_retries": max_retries,
                     "final_error": str(e)
                 })
-                raise Exception(f"Failed to generate embedding: {str(e)}")
+                raise Exception(f"Failed to generate embedding after {max_retries} attempts: {str(e)}")
         
         logger.error("Max retries exceeded for embedding generation")
         raise Exception("Max retries exceeded for embedding generation")

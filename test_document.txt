@@ -1,1 +1,0 @@
-This is a test document for the Arc-Fusion RAG system. It contains some sample text to test the document processing pipeline with Gemini embeddings. This should be chunked into smaller pieces and stored in Weaviate.
