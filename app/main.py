@@ -52,7 +52,7 @@ class AskResponse(BaseModel):
     success: bool
     processing_time: float
     agent_path: List[str]
-    citations: List[Dict[str, str]]
+    citations: List[Dict[str, Any]]
     confidence: float
     metadata: Dict[str, Any]
 
@@ -382,4 +382,4 @@ if __name__ == "__main__":
         host=os.getenv("FASTAPI_HOST", "0.0.0.0"),
         port=int(os.getenv("FASTAPI_PORT", 8000)),
         reload=os.getenv("ENVIRONMENT") == "development"
-    ) 
+    )

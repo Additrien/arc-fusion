@@ -70,18 +70,18 @@ class WebSearchService:
             
             # Step 3: Process and format results
             logger.info("Processing web search results")
-            web_context, web_sources = self._process_search_results(search_results)
+            web_context_list, web_sources = self._process_search_results(search_results)
             
             logger.info(f"Retrieved web context from {len(web_sources)} sources")
             
             # Update state
             updated_state = state.copy()
             updated_state.update({
-                "web_context": web_context,
+                "web_context": web_context_list,
                 "web_sources": web_sources,
                 "search_query": optimized_query,
                 "step_count": state.get("step_count", 0) + 1,
-                "intent": "synthesize",
+                "intent": "synthesize",  # Keep for compatibility, but orchestrator will manage flow
                 "tasks_completed": state.get("tasks_completed", []) + ["web_search"]
             })
             
@@ -178,7 +178,7 @@ Optimized Search Query:"""
                 logger.error(f"Unexpected error in Tavily search: {str(e)}")
                 raise
     
-    def _process_search_results(self, results: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+    def _process_search_results(self, results: List[Dict[str, Any]]) -> tuple[List[str], List[Dict[str, Any]]]:
         """
         Process and format Tavily search results.
         
@@ -186,10 +186,10 @@ Optimized Search Query:"""
             results: Raw results from Tavily API
             
         Returns:
-            Tuple of (formatted_context, source_metadata)
+            Tuple of (list_of_context_strings, source_metadata)
         """
         
-        web_context_parts = []
+        web_context_list = []
         web_sources = []
         
         for i, result in enumerate(results):
@@ -199,29 +199,23 @@ Optimized Search Query:"""
             score = result.get('score', 0.0)
             
             if content and len(content.strip()) > 0:
-                # Format context entry
-                context_entry = f"Source {i+1}: {title}\n{content}\n"
-                web_context_parts.append(context_entry)
+                web_context_list.append(content)
                 
-                # Track source metadata
                 web_sources.append({
                     "title": title,
                     "url": url,
-                    "content_preview": content[:200] + "..." if len(content) > 200 else content,
+                    "content": content, # Store the full content for citation
                     "score": score,
                     "index": i + 1
                 })
         
-        # Combine all context into a single string
-        web_context = "\n---\n".join(web_context_parts)
-        
-        return web_context, web_sources
+        return web_context_list, web_sources
     
     def _create_disabled_state(self, state: GraphState) -> GraphState:
         """Create state when web search is disabled (no API key)."""
         updated_state = state.copy()
         updated_state.update({
-            "web_context": "Web search is currently unavailable (API key not configured).",
+            "web_context": ["Web search is currently unavailable (API key not configured)."],
             "web_sources": [],
             "search_query": None,
             "step_count": state.get("step_count", 0) + 1,
@@ -236,7 +230,7 @@ Optimized Search Query:"""
         """Create state when no web results are found."""
         updated_state = state.copy()
         updated_state.update({
-            "web_context": "No relevant information found on the web for this query.",
+            "web_context": [],
             "web_sources": [],
             "search_query": state["query"],
             "step_count": state.get("step_count", 0) + 1,
@@ -248,7 +242,7 @@ Optimized Search Query:"""
         """Create state when an error occurs."""
         updated_state = state.copy()
         updated_state.update({
-            "web_context": "An error occurred while searching the web. Please try again.",
+            "web_context": ["An error occurred while searching the web. Please try again."],
             "web_sources": [],
             "search_query": None,
             "step_count": state.get("step_count", 0) + 1,
@@ -296,4 +290,4 @@ def web_search_agent(state: GraphState) -> GraphState:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
-        return loop.run_until_complete(web_search_service.search_web(state)) 
+        return loop.run_until_complete(web_search_service.search_web(state))

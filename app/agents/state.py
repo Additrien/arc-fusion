@@ -35,13 +35,18 @@ class GraphState(TypedDict):
     document_sources: Optional[List[Dict[str, Any]]]  # Source metadata
     
     # Web search
-    web_context: Optional[str]  # Web search results
+    # --- CHANGE 1: web_context is now a LIST of strings, not a single string. ---
+    # This allows us to keep each web source's text separate for citations.
+    web_context: Optional[List[str]]  # Web search results
     search_query: Optional[str]  # Optimized search query
     web_sources: Optional[List[Dict[str, Any]]]  # Web source metadata
     
     # Response generation
     final_answer: Optional[str]  # Generated response
-    citations: Optional[List[Dict[str, str]]]  # Source citations
+    # --- CHANGE 2: The citation dictionary now uses 'Any' for its values. ---
+    # This is because it now includes the source 'text' (string) and 'score' (float),
+    # not just strings.
+    citations: Optional[List[Dict[str, Any]]]  # Source citations with text
     answer_confidence: Optional[float]  # Confidence in final answer
     
     # System metadata

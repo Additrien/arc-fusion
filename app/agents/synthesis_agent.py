@@ -103,7 +103,7 @@ class SynthesisService:
             "has_web_context": False,
             "document_chunks": [],
             "document_sources": [],
-            "web_content": None,
+            "web_content": [],
             "web_sources": [],
             "total_sources": 0
         }
@@ -121,7 +121,7 @@ class SynthesisService:
             logger.debug(f"Found {len(retrieved_context)} document chunks")
         
         # Web context
-        web_context = state.get("web_context")
+        web_context = state.get("web_context", [])
         web_sources = state.get("web_sources", [])
         
         if web_context:
@@ -166,9 +166,13 @@ class SynthesisService:
         if context_info["has_web_context"]:
             prompt_parts.extend([
                 "\n## WEB SEARCH CONTEXT",
-                "The following information is from recent web search results:",
-                f"\n{context_info['web_content']}"
+                "The following information is from recent web search results:"
             ])
+            
+            for i, chunk in enumerate(context_info["web_content"], 1):
+                source = context_info["web_sources"][i-1] if i-1 < len(context_info["web_sources"]) else {}
+                title = source.get("title", "Unknown Source")
+                prompt_parts.append(f"\n**Web Source {i}** ({title}):\n{chunk}")
         
         # Add guidelines
         prompt_parts.extend([
@@ -195,46 +199,48 @@ class SynthesisService:
         
         return "\n".join(prompt_parts)
     
-    def _generate_citations(self, context_info: Dict[str, Any]) -> List[Dict[str, str]]:
+    def _generate_citations(self, context_info: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Generate citations for the sources used.
+        Generate citations for the sources used, including the source text.
         
         Args:
             context_info: Context information with sources
             
         Returns:
-            List of citation objects
+            List of citation objects with text content.
         """
         citations = []
         
         # Document citations
-        for i, source in enumerate(context_info.get("document_sources", []), 1):
-            # Convert document_id to string in case it's a UUID object
+        doc_chunks = context_info.get("document_chunks", [])
+        doc_sources = context_info.get("document_sources", [])
+        
+        for i, source in enumerate(doc_sources):
             document_id = source.get("document_id", "")
             if document_id:
                 document_id = str(document_id)
             
-            # Use hybrid search score
-            score = source.get("score", 0.0)
-            
             citations.append({
                 "type": "document",
-                "id": f"doc_{i}",
+                "id": f"doc_{i+1}",
                 "filename": source.get("filename", "Unknown Document"),
                 "document_id": document_id,
-                "score": str(score)
+                "score": source.get("score", 0.0),
+                "text": doc_chunks[i] if i < len(doc_chunks) else ""
             })
         
         # Web citations
-        for i, source in enumerate(context_info.get("web_sources", []), 1):
+        web_sources = context_info.get("web_sources", [])
+        for i, source in enumerate(web_sources):
             citations.append({
                 "type": "web",
-                "id": f"web_{i}",
+                "id": f"web_{i+1}",
                 "title": source.get("title", "Unknown Title"),
                 "url": source.get("url", ""),
-                "score": str(source.get("score", 0.0))
+                "score": source.get("score", 0.0),
+                "text": source.get("content", "") # This content is now the full text
             })
-        
+            
         return citations
     
     def _assess_confidence(self, context_info: Dict[str, Any], answer: str) -> float:
@@ -318,4 +324,4 @@ def synthesis_agent(state: GraphState) -> GraphState:
         asyncio.set_event_loop(loop)
     
     # Run the async synthesis
-    return loop.run_until_complete(synthesis_service.synthesize_response(state)) 
+    return loop.run_until_complete(synthesis_service.synthesize_response(state))
