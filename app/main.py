@@ -10,6 +10,8 @@ from app.core.document_processor import DocumentProcessor
 from app.core.vector_store import VectorStore
 from app.core.agent_service import agent_service
 from app.utils.logger import init_logging_from_env, get_logger, set_request_id
+from app.utils.performance import get_performance_summary, clear_performance_metrics
+from app.utils.cache import embedding_cache, hyde_cache
 import uuid
 
 load_dotenv()
@@ -58,6 +60,38 @@ class AskResponse(BaseModel):
 async def health_check():
     """Health check endpoint for monitoring and load balancing."""
     return {"status": "healthy", "service": "arc-fusion-rag"}
+
+@app.get("/api/v1/performance")
+async def get_performance_metrics():
+    """Get performance metrics for the system."""
+    return get_performance_summary()
+
+@app.delete("/api/v1/performance")
+async def clear_performance_metrics_endpoint():
+    """Clear performance metrics."""
+    clear_performance_metrics()
+    return {"message": "Performance metrics cleared"}
+
+@app.get("/api/v1/cache")
+async def get_cache_info():
+    """Get cache statistics."""
+    return {
+        "embedding_cache": {
+            "size": embedding_cache.size(),
+            "ttl": 3600
+        },
+        "hyde_cache": {
+            "size": hyde_cache.size(),
+            "ttl": 1800
+        }
+    }
+
+@app.delete("/api/v1/cache")
+async def clear_cache():
+    """Clear all caches."""
+    embedding_cache.clear()
+    hyde_cache.clear()
+    return {"message": "All caches cleared"}
 
 # Document Management Endpoints
 @app.post("/api/v1/documents", status_code=status.HTTP_201_CREATED)

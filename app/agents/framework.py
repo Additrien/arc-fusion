@@ -57,18 +57,18 @@ class AgentFramework:
         for agent_name, config in agents.items():
             graph.add_node(agent_name, config['function'])
             logger.debug(f"Added agent node: {agent_name}")
-        
+
+        # Add a central orchestrator node that manages the task list
+        graph.add_node("orchestrator", self.orchestrator_node)
+
         # Set entry point (must have a routing agent)
         if 'routing' not in agents:
             raise ValueError("No routing agent found. Please register a routing agent.")
         
         graph.set_entry_point('routing')
         
-        # Add conditional edges from routing agent
-        self._add_routing_edges(graph)
-        
-        # Add any custom edges
-        self._add_custom_edges(graph)
+        # Define the graph structure using edges
+        self._build_graph_edges(graph, agents)
         
         # Compile the graph
         self.graph = graph.compile()
@@ -76,172 +76,121 @@ class AgentFramework:
         
         logger.info("Multi-agent graph built successfully")
         return self.graph
-    
-    def _add_routing_edges(self, graph: StateGraph):
-        """Add conditional edges from the routing agent to other agents."""
-        
-        # Build routing map based on agent capabilities
-        routing_map = self._build_routing_map()
-        
-        # Add the conditional edge from routing
+
+    def _build_graph_edges(self, graph: StateGraph, agents: Dict[str, Any]):
+        """Define the edges and control flow of the multi-agent graph."""
+        retrieval_agent = self._get_agent_for_capability("document_search")
+        web_agent = self._get_agent_for_capability("web_search")
+        synthesis_agent = self._get_agent_for_capability("response_synthesis")
+
+        # 1. The routing agent goes to the orchestrator to initialize the task list.
+        graph.add_edge('routing', 'orchestrator')
+
+        # 2. After the orchestrator updates the task list, a conditional router decides the next agent.
         graph.add_conditional_edges(
-            "routing",
-            self._route_to_next_agent,
-            routing_map
+            "orchestrator",
+            self._routing_logic,
+            {
+                # Map potential destinations to themselves
+                **({retrieval_agent: retrieval_agent} if retrieval_agent else {}),
+                **({web_agent: web_agent} if web_agent else {}),
+                **({synthesis_agent: synthesis_agent} if synthesis_agent else {}),
+                END: END
+            }
         )
-        
-        logger.debug(f"Added routing edges: {list(routing_map.keys())}")
-    
-    def _build_routing_map(self) -> Dict[str, str]:
+
+        # 3. Retrieval and search agents loop back to the orchestrator to update the task list status.
+        if retrieval_agent:
+            graph.add_edge(retrieval_agent, 'orchestrator')
+        if web_agent:
+            graph.add_edge(web_agent, 'orchestrator')
+
+        # 4. The synthesis agent is the final step before ending.
+        if synthesis_agent:
+            graph.add_edge(synthesis_agent, END)
+
+    def orchestrator_node(self, state: GraphState) -> Dict[str, Any]:
         """
-        Build the routing map based on agent capabilities.
-        
-        Returns:
-            Mapping of intents/capabilities to agent names
+        This node manages the task list for the agentic workflow.
+        It initializes tasks on the first run and adds tasks based on intermediate results.
+        It MUST return a dictionary to update the state.
         """
-        routing_map = {}
+        logger.debug(f"Orchestrator Node: tasks_to_run={state.get('tasks_to_run', [])}, tasks_completed={state.get('tasks_completed', [])}")
         
-        # Standard routing based on intent
-        routing_map.update({
-            "retrieve_corpus": self._get_agent_for_capability("document_search"),
-            "search_web": self._get_agent_for_capability("web_search"),
-            "synthesize": self._get_agent_for_capability("response_synthesis"),
-            "clarify": self._get_agent_for_capability("clarification"),
-            "end": END
-        })
+        # First pass: Initialize tasks based on the router's intent.
+        if not state.get('tasks_to_run'):
+            intent = state.get('intent', 'end')
+            tasks = []
+            if intent == 'retrieve_corpus':
+                tasks = ['corpus_retrieval']
+            elif intent == 'search_web':
+                tasks = ['web_search']
+            elif intent == 'corpus_and_web_search':
+                tasks = ['corpus_retrieval', 'web_search']
+            
+            logger.info(f"Orchestrator initialized tasks for intent '{intent}': {tasks}")
+            return {
+                "tasks_to_run": tasks,
+                "tasks_completed": []
+            }
+
+        # Subsequent passes: Check for quality-based fallback.
+        completed_tasks = state.get('tasks_completed', [])
+        tasks_to_run = state.get('tasks_to_run', [])
         
-        # Remove None values (capabilities not available) but keep END
-        routing_map = {k: v for k, v in routing_map.items() if v is not None}
-        
-        # Always ensure END is available
-        routing_map[END] = END
-        
-        # CRITICAL FIX: Add agent names as keys pointing to themselves
-        # This allows the routing function to return agent names directly
-        all_agents = AgentRegistry.get_all_agents()
-        for agent_name in all_agents.keys():
-            routing_map[agent_name] = agent_name
-        
-        return routing_map
+        if 'corpus_retrieval' in completed_tasks and 'web_search' not in tasks_to_run:
+            best_score = state.get('best_retrieval_score', 1.0)
+            if best_score < config.RELEVANCE_THRESHOLD:
+                logger.info(f"Low retrieval score ({best_score:.2f}), adding web_search as a fallback task.")
+                return {"tasks_to_run": tasks_to_run + ['web_search']}
+
+        # If no state changes are needed, return an empty dict.
+        return {}
+
+    def _routing_logic(self, state: GraphState) -> str:
+        """
+        This is the conditional edge logic. It inspects the state and returns the
+        string name of the node to execute next.
+        """
+        tasks_to_run = state.get('tasks_to_run', [])
+        tasks_completed = state.get('tasks_completed', [])
+
+        # Find the next task that hasn't been completed.
+        for task in tasks_to_run:
+            if task not in tasks_completed:
+                next_agent = self._get_agent_for_capability_or_name(task)
+                if next_agent != END:
+                    logger.info(f"Routing logic determined next agent: {next_agent}")
+                    state['agent_path'].append(next_agent)
+                    return next_agent
+                else:
+                    break # Agent not found, end the process.
+
+        # If all tasks are completed, decide whether to synthesize or end.
+        has_context = state.get('retrieved_context') or state.get('web_context')
+        if has_context:
+            synthesis_agent = self._get_agent_for_capability("response_synthesis")
+            logger.info("All tasks completed. Routing to synthesis.")
+            state['agent_path'].append(synthesis_agent)
+            return synthesis_agent
+        else:
+            logger.info("All tasks completed, but no context found. Routing to END.")
+            return END
     
+    def _get_agent_for_capability_or_name(self, task_name: str) -> str:
+        """Helper to resolve a task name to an agent name."""
+        if AgentRegistry.get_agent(task_name):
+            return task_name
+        
+        agent = self._get_agent_for_capability(task_name)
+        if not agent:
+            logger.error(f"No agent found for capability '{task_name}', ending execution.")
+            return END
+        return agent
+
     def _get_agent_for_capability(self, capability: str) -> Optional[str]:
         """Get the best agent for a specific capability."""
         return AgentRegistry.get_best_agent_for_capability(capability)
-    
-    def _route_to_next_agent(self, state: GraphState) -> str:
-        """
-        Dynamic routing function that determines next agent based on state.
-        
-        This function is called by LangGraph to determine the next node.
-        """
-        intent = state.get("intent", "end")
-        
-        # Log routing decision
-        logger.debug(f"Routing decision: intent='{intent}', step={state.get('step_count', 0)}")
-        
-        # Update agent path tracking
-        if "agent_path" not in state:
-            state["agent_path"] = []
-        
-        # Handle different intents
-        if intent == "retrieve_corpus":
-            next_agent = self._get_agent_for_capability("document_search")
-        elif intent == "search_web":
-            next_agent = self._get_agent_for_capability("web_search")
-        elif intent == "synthesize":
-            next_agent = self._get_agent_for_capability("response_synthesis")
-        elif intent == "clarify":
-            next_agent = self._get_agent_for_capability("clarification")
-        else:
-            next_agent = END
-            
-        # Fallback if capability not available
-        if next_agent is None:
-            logger.warning(f"No agent found for intent '{intent}', falling back to web search")
-            next_agent = self._get_agent_for_capability("web_search")
-            if next_agent is None:
-                logger.error("No web search agent available, ending conversation")
-            next_agent = END
-        
-        if next_agent and next_agent != END:
-            state["agent_path"].append(next_agent)
-            logger.debug(f"Routing to agent: {next_agent}")
-        else:
-            logger.debug("Routing to END")
-        
-        return next_agent or END
-    
-    def _route_after_corpus_retrieval(self, state: GraphState) -> str:
-        """
-        Intelligent routing after corpus retrieval using hybrid search quality assessment.
-        
-        This implements sophisticated quality-based routing:
-        - High hybrid scores → proceed to synthesis  
-        - Low hybrid scores → fallback to web search
-        - No results found → fallback to web search
-        
-        Satisfies assignment requirement with QUALITY assessment:
-        "performing a web search... when the answer cannot be found in the provided PDFs"
-        """
-        retrieved_context = state.get("retrieved_context", [])
-        best_retrieval_score = state.get("best_retrieval_score", 0.0)
-        session_id = state.get("session_id", "unknown")
-        
-        logger.info(f"Quality assessment (session: {session_id}): "
-                   f"results={len(retrieved_context)}, "
-                   f"best_hybrid_score={best_retrieval_score:.3f}/1.0")
-        
-        if not retrieved_context:
-            logger.info(f"No corpus results found → web search fallback (session: {session_id})")
-            return self._add_fallback_tracking(state, "no_results")
-        
-        if best_retrieval_score >= config.RELEVANCE_THRESHOLD:
-            logger.info(f"High relevance score ({best_retrieval_score:.3f}/1.0) → synthesis (session: {session_id})")
-            return "synthesis"
-        else:
-            logger.info(f"Low relevance score ({best_retrieval_score:.3f}/1.0) → web search fallback (session: {session_id})")
-            return self._add_fallback_tracking(state, "low_relevance_score")
-
-    def _add_fallback_tracking(self, state: GraphState, reason: str) -> str:
-        """Add fallback tracking info to state and return web_search."""
-        if "agent_path" not in state:
-            state["agent_path"] = []
-        state["agent_path"].append(f"web_search_fallback_{reason}")
-        
-        # Track fallback reason for analytics
-        if "fallback_reason" not in state:
-            state["fallback_reason"] = reason
-            
-        return "web_search"
-    
-    def _add_custom_edges(self, graph: StateGraph):
-        """Add any custom edges between agents."""
-        
-        synthesis_agent = self._get_agent_for_capability("response_synthesis")
-        retrieval_agent = self._get_agent_for_capability("document_search")
-        web_agent = self._get_agent_for_capability("web_search")
-        
-        if synthesis_agent and retrieval_agent:
-            # CRITICAL FIX: Add conditional edge from corpus retrieval
-            # This enables automatic fallback to web search when no corpus results found
-            graph.add_conditional_edges(
-                retrieval_agent,
-                self._route_after_corpus_retrieval,
-                {
-                    "web_search": web_agent if web_agent else synthesis_agent,
-                    "synthesis": synthesis_agent
-                }
-            )
-            logger.debug(f"Added conditional edge: {retrieval_agent} -> [web_search|synthesis]")
-            
-            # Web search always goes to synthesis
-            if web_agent:
-                graph.add_edge(web_agent, synthesis_agent)
-                logger.debug(f"Added edge: {web_agent} -> {synthesis_agent}")
-            
-            # Synthesis goes to END
-            graph.add_edge(synthesis_agent, END)
-            logger.debug(f"Added edge: {synthesis_agent} -> END")
     
     async def process_query(self, 
                            query: str, 
@@ -261,7 +210,7 @@ class AgentFramework:
         if not self._built or not self.graph:
             raise RuntimeError("Graph not built. Call build_graph() first.")
         
-        # Initialize state
+        # Initialize state, starting the agent_path with the entrypoint.
         state = GraphState(
             messages=[],
             query=query,
@@ -270,7 +219,9 @@ class AgentFramework:
             required_capability=None,
             retrieved_context=[],
             step_count=0,
-            agent_path=[],
+            agent_path=['routing'], # Start the path with the entry point agent
+            tasks_to_run=[],
+            tasks_completed=[],
             **(initial_state or {})
         )
         
@@ -284,7 +235,7 @@ class AgentFramework:
             return final_state
             
         except Exception as e:
-            logger.error(f"Error processing query: {str(e)}")
+            logger.error(f"Error processing query: {str(e)}", exc_info=True)
             # Return error state
             return {
                 **state,
@@ -306,4 +257,4 @@ class AgentFramework:
     def rebuild_graph(self) -> Any:
         """Rebuild the graph (useful when agents are added/removed)."""
         logger.info("Rebuilding multi-agent graph")
-        return self.build_graph() 
+        return self.build_graph()

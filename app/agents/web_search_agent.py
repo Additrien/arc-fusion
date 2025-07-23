@@ -10,6 +10,7 @@ import json
 from typing import Dict, Any, List
 import httpx
 from google import genai
+from google.genai import types
 
 from .registry import AgentRegistry
 from .state import GraphState
@@ -80,7 +81,8 @@ class WebSearchService:
                 "web_sources": web_sources,
                 "search_query": optimized_query,
                 "step_count": state.get("step_count", 0) + 1,
-                "intent": "synthesize"  # Next step is synthesis
+                "intent": "synthesize",
+                "tasks_completed": state.get("tasks_completed", []) + ["web_search"]
             })
             
             return updated_state
@@ -114,7 +116,10 @@ Optimized Search Query:"""
         try:
             response = client.models.generate_content(
                 model=self.query_optimizer_model,
-                contents=optimization_prompt
+                contents=optimization_prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                )
             )
             optimized = response.text.strip().replace('"', '').replace("'", "")
             

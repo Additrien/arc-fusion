@@ -51,10 +51,14 @@ class GraphState(TypedDict):
     error_info: Optional[Dict[str, Any]]  # Error tracking
     fallback_reason: Optional[str]  # Reason for web search fallback (no_results, low_quality, etc.)
     
+    # Orchestration state for multi-step information gathering
+    tasks_to_run: List[str]
+    tasks_completed: List[str]
+    
     # Future extensibility - agents can add custom fields
     custom_data: Optional[Dict[str, Any]]
 
 
 # Convenience type for agent functions
 from typing import Callable
-AgentFunction = Callable[[GraphState], GraphState] 
+AgentFunction = Callable[[GraphState], GraphState]

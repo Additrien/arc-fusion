@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional
 from weaviate.classes.init import Auth
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from app.utils.performance import time_async_function, time_async_block
 
 class VectorStore:
     """Handles Weaviate vector database operations."""
@@ -293,6 +294,7 @@ class VectorStore:
             logger.error(f"Failed to store parent chunks: {str(e)}")
             # Don't fail the entire operation if parent storage fails
     
+    @time_async_function("vector_store.hybrid_search")
     async def hybrid_search(self, query: str, query_embedding: List[float], 
                            limit: int = 20) -> List[Dict[str, Any]]:
         """Perform hybrid search (vector + BM25) on child chunks."""
@@ -326,6 +328,7 @@ class VectorStore:
         
         return await asyncio.get_event_loop().run_in_executor(self.executor, _search_sync)
     
+    @time_async_function("vector_store.get_parent_chunk")
     async def get_parent_chunk_by_id(self, parent_id: str) -> Optional[str]:
         """Retrieve parent chunk content by parent_id from Weaviate."""
         await self._ensure_connected()

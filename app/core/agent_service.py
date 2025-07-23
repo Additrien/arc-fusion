@@ -13,6 +13,7 @@ import time
 from ..agents.framework import AgentFramework
 from ..agents.loader import load_all_agents  # This triggers agent registration
 from ..utils.logger import get_logger
+from ..utils.performance import time_async_function, time_async_block, log_performance_summary
 
 logger = get_logger('arc_fusion.core.agent_service')
 
@@ -52,6 +53,7 @@ class AgentService:
             logger.error(f"Failed to initialize agent framework: {str(e)}")
             raise
     
+    @time_async_function("agent_service.process_query")
     async def process_query(self, query: str, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a user query through the multi-agent system.
@@ -94,6 +96,9 @@ class AgentService:
             response = self._format_response(final_state, processing_time)
             
             logger.info(f"Query processed successfully in {processing_time:.2f}s for session {session_id}")
+            
+            # Log performance summary
+            log_performance_summary()
             
             return response
             

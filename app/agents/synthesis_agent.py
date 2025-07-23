@@ -13,6 +13,7 @@ from google.genai import types
 from .registry import AgentRegistry
 from .state import GraphState
 from ..utils.logger import get_logger
+from ..utils.performance import time_async_function, time_async_block
 
 logger = get_logger('arc_fusion.agents.synthesis')
 
@@ -24,16 +25,19 @@ class SynthesisService:
     """Service for generating final answers using retrieved context."""
     
     def __init__(self):
-        # Use Gemini 2.5 Pro for high-quality response synthesis
-        self.synthesis_model = 'gemini-2.5-pro'
+        # Use Gemini 2.5 Flash for faster response synthesis (still high quality)
+        self.synthesis_model = 'gemini-2.5-flash'
         
-        # Generation configuration for balanced quality and creativity
+        # Optimized generation configuration for speed
         self.generation_config = {
             "temperature": 0.1,  # Low temperature for factual accuracy
             "top_p": 0.8,
-            "max_output_tokens": 2048,
+            "max_output_tokens": 1024,
+            "thinking_config": {
+                "thinking_budget": 0
+            }
         }
-        
+    @time_async_function("synthesis.synthesize_response")
     async def synthesize_response(self, state: GraphState) -> GraphState:
         """
         Generate the final answer using available context.

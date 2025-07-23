@@ -21,6 +21,8 @@ from .state import GraphState
 from ..core.vector_store import VectorStore
 from ..core.document_processor import DocumentProcessor
 from ..utils.logger import get_logger
+from ..utils.performance import time_async_function, time_async_block
+from ..utils.cache import embedding_cache, hyde_cache
 from .. import config
 
 logger = get_logger('arc_fusion.agents.corpus_retrieval')
@@ -44,6 +46,7 @@ class CorpusRetrievalService:
         # Configure Gemini with new API
         self.client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
         
+    @time_async_function("corpus_retrieval.retrieve_and_rerank")
     async def retrieve_and_rerank(self, state: GraphState) -> GraphState:
         """
         Execute the full RAG pipeline: HyDE -> Hybrid Search -> Parent Retrieval -> LLM Judging.
@@ -80,19 +83,20 @@ class CorpusRetrievalService:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return self._create_error_state(state, e)
     
+    @time_async_function("corpus_retrieval.execute_pipeline")
     async def _execute_retrieval_pipeline(self, state: GraphState) -> GraphState:
         """Execute the core retrieval pipeline with all steps."""
         query = state["query"]
         session_id = state["session_id"]
         
-        # Step 1: HyDE Query Expansion
-        logger.info("Performing HyDE query expansion")
-        expanded_query = await self._generate_hypothetical_document(query)
-        logger.info(f"HyDE expanded query length: {len(expanded_query)} chars")
+        # Step 1 & 2: Parallel HyDE expansion and embedding generation
+        logger.info("Performing parallel HyDE expansion and embedding generation")
+        hyde_task = self._generate_hypothetical_document(query)
+        embedding_task = self._generate_query_embedding(query)  # Use original query for embedding
         
-        # Step 2: Generate query embedding
-        logger.info("Generating query embedding")
-        query_embedding = await self._generate_query_embedding(expanded_query)
+        # Wait for both to complete
+        expanded_query, query_embedding = await asyncio.gather(hyde_task, embedding_task)
+        logger.info(f"HyDE expanded query length: {len(expanded_query)} chars")
         logger.info(f"Query embedding generated: {len(query_embedding)} dimensions")
         
         # Step 3: Hybrid search on child chunks
@@ -202,18 +206,26 @@ class CorpusRetrievalService:
             "document_sources": final_sources,
             "retrieval_scores": retrieval_scores,
             "best_retrieval_score": best_retrieval_score,
-            "step_count": state.get("step_count", 0) + 1
+            "step_count": state.get("step_count", 0) + 1,
+            "tasks_completed": state.get("tasks_completed", []) + ["corpus_retrieval"]
         })
         
         return updated_state
     
+    @time_async_function("corpus_retrieval.hyde_expansion")
     async def _generate_hypothetical_document(self, query: str) -> str:
         """
-        Generate a hypothetical document using HyDE technique.
+        Generate a hypothetical document using HyDE (Hypothetical Document Embeddings).
         
-        HyDE works by generating a document that might contain the answer,
-        which often produces better embeddings for retrieval than the raw query.
+        This expands the query by generating a hypothetical document that would contain
+        the answer, improving retrieval performance.
         """
+        # Check cache first
+        cache_key = f"hyde:{query}"
+        cached_result = hyde_cache.get(cache_key)
+        if cached_result:
+            logger.info("Using cached HyDE expansion")
+            return cached_result
         
         hyde_prompt = f"""
 You are an expert academic researcher. Given a research question, write a detailed paragraph that would likely appear in an academic paper answering this question.
@@ -226,14 +238,25 @@ Write a comprehensive paragraph (100-200 words) that would contain the answer:
 """
         
         try:
+            # Define the generation configuration to disable thinking
+            generation_config = {
+                "thinking_config": {
+                    "thinking_budget": 0
+                }
+            }
+
             response = await self.client.aio.models.generate_content(
                 model=self.hyde_model, 
-                contents=hyde_prompt
+                contents=hyde_prompt,
+                generation_config=generation_config,
             )
             hypothetical_doc = response.text.strip()
             
             # Combine original query with hypothetical document for better retrieval
             expanded_query = f"{query} {hypothetical_doc}"
+            
+            # Cache the result
+            hyde_cache.set(cache_key, expanded_query)
             
             logger.debug(f"HyDE expansion generated {len(hypothetical_doc)} characters")
             return expanded_query
@@ -241,9 +264,17 @@ Write a comprehensive paragraph (100-200 words) that would contain the answer:
         except Exception as e:
             logger.warning(f"HyDE generation failed, using original query: {str(e)}")
             return query
-    
+
+    @time_async_function("corpus_retrieval.embedding_generation")
     async def _generate_query_embedding(self, query: str) -> List[float]:
         """Generate embedding for the query using the new google-genai SDK."""
+        # Check cache first
+        cache_key = f"embedding:{query}"
+        cached_result = embedding_cache.get(cache_key)
+        if cached_result:
+            logger.info("Using cached query embedding")
+            return cached_result
+        
         try:
             # Use the new google-genai SDK for embeddings
             response = await self.client.aio.models.embed_content(
@@ -262,6 +293,9 @@ Write a comprehensive paragraph (100-200 words) that would contain the answer:
                 embedding = list(response.embedding.values)
             else:
                 raise ValueError("Unexpected embedding response structure")
+            
+            # Cache the result
+            embedding_cache.set(cache_key, embedding)
                 
             logger.debug(f"Generated query embedding with {len(embedding)} dimensions")
             return embedding
@@ -270,6 +304,7 @@ Write a comprehensive paragraph (100-200 words) that would contain the answer:
             logger.error(f"Failed to generate query embedding: {str(e)}")
             raise
     
+    @time_async_function("corpus_retrieval.parent_retrieval")
     async def _retrieve_parent_context(self, child_results: List[Dict[str, Any]]) -> Tuple[List[str], List[Dict[str, Any]]]:
         """
         Retrieve parent chunks for the top child results.

@@ -8,6 +8,7 @@ query and determine the appropriate next action in our multi-agent pipeline.
 import os
 from typing import Dict, Any
 from google import genai
+from google.genai import types
 from .registry import AgentRegistry
 from .state import GraphState
 from ..utils.logger import get_logger
@@ -48,7 +49,10 @@ class RoutingService:
             # Generate response using Gemini Flash with new API
             response = client.models.generate_content(
                 model=self.model,
-                contents=prompt
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)  # Disable thinking for speed
+                )
             )
             
             # Parse the response to extract intent
@@ -94,6 +98,9 @@ Analyze this user query and classify it into ONE of these categories:
 - Examples: "What did OpenAI release this month?", "Latest developments in LLMs", "Current state of AI research"
 - OR when user explicitly requests web search: "Search online for...", "Look up on the web..."
 
+**corpus_and_web_search**: Query explicitly asks to combine internal knowledge with web search results.
+- Examples: "Compare the findings in your documents with what's on the web about text-to-sql", "What are text-to-SQL challenges based on your internal knowledge and your search on internet?"
+
 **clarify**: Query is too vague or ambiguous to process
 - Examples: "How many examples are enough?", "What's the best method?", "How does it work?"
 - Missing context: dataset, method, paper reference, specific domain
@@ -103,7 +110,7 @@ Analyze this user query and classify it into ONE of these categories:
 
 User Query: "{query}"
 
-Respond with ONLY the category name (retrieve_corpus, search_web, clarify, or end) followed by a confidence score (0-1).
+Respond with ONLY the category name (retrieve_corpus, search_web, corpus_and_web_search, clarify, or end) followed by a confidence score (0-1).
 
 Format: INTENT: <category>
 CONFIDENCE: <score>
@@ -119,7 +126,7 @@ REASONING: <brief explanation>
             if line.startswith('INTENT:'):
                 intent = line.split(':', 1)[1].strip().lower()
                 # Validate intent
-                valid_intents = ['retrieve_corpus', 'search_web', 'clarify', 'end']
+                valid_intents = ['retrieve_corpus', 'search_web', 'corpus_and_web_search', 'clarify', 'end']
                 if intent in valid_intents:
                     return intent
         
@@ -159,4 +166,4 @@ def routing_agent(state: GraphState) -> GraphState:
     
     This agent uses Gemini 2.5 Flash Lite for fast, cost-effective intent classification.
     """
-    return routing_service.analyze_query(state) 
+    return routing_service.analyze_query(state)

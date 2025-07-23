@@ -12,7 +12,7 @@ langchain-google-genai==2.1.8
 # Vector Database & Embeddings
 weaviate-client==4.16.3
 # Google Gemini API - EMBEDDINGS
-google-genai>=1.0.0
+google-genai>=1.26.0
 
 # Document Processing
 PyPDF2==3.0.1
@@ -42,7 +42,7 @@ langfuse==3.2.1
 tavily-python==0.7.10
 
 # HTTP Client
-httpx==0.26.0
+httpx==0.28.1
 
 # Testing
 pytest==8.2.0
