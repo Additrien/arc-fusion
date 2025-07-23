@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  app:
+    # Build using the GPU-specific Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

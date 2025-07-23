@@ -17,15 +17,26 @@ SYNTHESIS_MODEL = "gemini-2.5-pro"
 EMBEDDING_MODEL = "gemini-embedding-001"
 
 
-# --- Corpus Retrieval Agent ---
-# Number of initial child chunks to retrieve from the vector store.
-MAX_CHILD_CHUNKS_RETRIEVAL = 30
+# --- Reranking & Context Selection ---
+# Enables the two-stage retrieval process with a Cross-Encoder reranker.
+ENABLE_RERANKING = True
 
-# Number of parent chunks to pass to the LLM Judge for evaluation.
-MAX_PARENT_CHUNKS_FOR_JUDGING = 10
+# The Cross-Encoder model to use for reranking.
+# See: https://huggingface.co/models?other=reranker
+RERANKER_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 
-# Number of final, top-ranked chunks to pass to the synthesis agent.
-MAX_FINAL_CHUNKS_FOR_SYNTHESIS = 5
+# --- Hardware Configuration ---
+# The device to run local models on.
+# Options: 'auto', 'cuda', 'cpu'
+# 'auto' will use a CUDA-enabled GPU if available, otherwise fallback to CPU.
+DEVICE = "auto"
+
+# The number of initial candidates to retrieve from the vector store.
+# This larger set is then fed to the reranker.
+INITIAL_RETRIEVAL_K = 25
+
+# The final number of top-ranked documents to pass to the synthesis agent.
+RERANKER_TOP_K = 5
 
 
 # --- Hybrid Search Relevance ---
@@ -57,10 +68,10 @@ EMBEDDING_MAX_RETRIES = 5
 # Base delay for embedding retry in seconds (will be exponentially increased)
 EMBEDDING_RETRY_BASE_DELAY = 2.0
 
-# Document processing chunk sizes (optimized for fewer API calls)
+# Document processing chunk sizes (optimized for reranker context window)
 PARENT_CHUNK_SIZE = 3000
 PARENT_CHUNK_OVERLAP = 200
-CHILD_CHUNK_SIZE = 1000
+CHILD_CHUNK_SIZE = 1000  # Stays within the 512 token limit of most rerankers
 CHILD_CHUNK_OVERLAP = 100
 
 
@@ -95,4 +106,4 @@ LLM_GENERATION_TIMEOUT = 30
 DEBUG_MODE = True
 
 # Maximum processing time before fallback to web search (seconds)
-MAX_PROCESSING_TIME = 45 
+MAX_PROCESSING_TIME = 45

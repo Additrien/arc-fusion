@@ -1,0 +1,10 @@
+# First, install all the base CPU requirements from the main file.
+# This ensures that all dependencies are kept in a single, manageable place.
+-r requirements.txt
+
+# --- GPU-Specific Overrides ---
+# The following lines explicitly install PyTorch with support for CUDA 12.1.
+# This is necessary for the model to run on a compatible NVIDIA GPU.
+# This line OVERWRITES the default CPU 'torch' installation from the base file.
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==2.3.1+cu121

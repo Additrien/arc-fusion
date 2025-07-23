@@ -2,49 +2,54 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
 
-# LLM & Agent Orchestration
+# --- LLM & Agent Orchestration ---
 langchain==0.3.26
 langchain-core==0.3.70
 langchain-text-splitters==0.3.8
 langgraph==0.5.4
 langchain-google-genai==2.1.8
 
-# Vector Database & Embeddings
+# --- Local AI Models & Reranking ---
+# Explicitly declared for the reranker agent and hardware management
+torch
+sentence-transformers
+
+# --- Vector Database & Embeddings ---
 weaviate-client==4.16.3
 # Google Gemini API - EMBEDDINGS
 google-genai>=1.26.0
 
-# Document Processing
+# --- Document Processing ---
 PyPDF2==3.0.1
 python-multipart==0.0.20
 
-# Configuration
+# --- Configuration ---
 python-dotenv==1.1.1
 pydantic==2.11.7
 
-# Data Processing
+# --- Data Processing ---
 pandas>=2.0.0
 numpy>=2.0.0
 
-# Core utilities
+# --- Core utilities ---
 typing-extensions
 certifi
 urllib3
 
-# System monitoring
+# --- System monitoring ---
 psutil
 
-# Evaluation & Observability
+# --- Evaluation & Observability ---
 ragas==0.1.19
 langfuse==3.2.1
 
-# Web Search
+# --- Web Search ---
 tavily-python==0.7.10
 
-# HTTP Client
+# --- HTTP Client ---
 httpx==0.28.1
 
-# Testing
+# --- Testing ---
 pytest==8.2.0
 pytest-asyncio==0.24.0
 pytest-mock==3.12.0

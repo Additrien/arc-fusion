@@ -12,9 +12,12 @@ import os
 import json
 import asyncio
 from typing import Dict, Any, List, Tuple
+import torch
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
+from sentence_transformers.cross_encoder import CrossEncoder
+
 
 from .registry import AgentRegistry
 from .state import GraphState
@@ -46,6 +49,42 @@ class CorpusRetrievalService:
         # Configure Gemini with new API
         self.client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
         
+                # Determine the device for local models
+        self.device = self._get_device()
+        
+        # Initialize the reranker model if enabled
+        self.reranker_model = None
+        if config.ENABLE_RERANKING:
+            try:
+                logger.info(f"Loading reranker model: {config.RERANKER_MODEL} onto device: {self.device}")
+                # Pass the determined device to the model
+                self.reranker_model = CrossEncoder(config.RERANKER_MODEL, device=self.device)
+                logger.info("Reranker model loaded successfully.")
+            except Exception as e:
+                logger.error(f"Failed to load reranker model: {str(e)}")
+
+    def _get_device(self) -> str:
+        """Determines the optimal device for Torch models."""
+        device = config.DEVICE
+        if device == "auto":
+            if torch.cuda.is_available():
+                selected_device = "cuda"
+                logger.info("Auto-detected CUDA-enabled GPU. Using 'cuda' device.")
+            else:
+                selected_device = "cpu"
+                logger.info("No CUDA-enabled GPU found. Using 'cpu' device.")
+        elif device == "cuda":
+            if not torch.cuda.is_available():
+                logger.warning("Device was set to 'cuda' but no GPU is available. Falling back to 'cpu'.")
+                selected_device = "cpu"
+            else:
+                selected_device = "cuda"
+        else:
+            selected_device = "cpu"
+        
+        logger.info(f"Final device selected for local models: {selected_device.upper()}")
+        return selected_device
+
     @time_async_function("corpus_retrieval.retrieve_and_rerank")
     async def retrieve_and_rerank(self, state: GraphState) -> GraphState:
         """
