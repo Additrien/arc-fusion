@@ -28,10 +28,10 @@ MAX_PARENT_CHUNKS_FOR_JUDGING = 10
 MAX_FINAL_CHUNKS_FOR_SYNTHESIS = 5
 
 
-# --- LLM Judge ---
-# On a scale of 1-10, the minimum score for a chunk to be considered "relevant".
+# --- Hybrid Search Relevance ---
+# On a scale of 0-1, the minimum hybrid score for a chunk to be considered "relevant".
 # This is used in the framework for routing to synthesis vs. web search.
-RELEVANCE_THRESHOLD = 7.0
+RELEVANCE_THRESHOLD = 0.7
 
 
 # --- Routing Agent ---

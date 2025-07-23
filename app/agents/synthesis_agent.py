@@ -210,8 +210,8 @@ class SynthesisService:
             if document_id:
                 document_id = str(document_id)
             
-            # Use LLM Judge score if available, fallback to hybrid search score
-            score = source.get("llm_judge_score", source.get("score", 0.0))
+            # Use hybrid search score
+            score = source.get("score", 0.0)
             
             citations.append({
                 "type": "document",

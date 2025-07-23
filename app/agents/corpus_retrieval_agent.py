@@ -25,18 +25,6 @@ from .. import config
 
 logger = get_logger('arc_fusion.agents.corpus_retrieval')
 
-# Pydantic models for structured output
-class AssessmentResult(BaseModel):
-    chunk_index: int
-    score: float
-    explanation: str
-    is_relevant: bool
-
-class JudgeResults(BaseModel):
-    assessments: List[AssessmentResult]
-
-# Remove global client initialization - will be done in the service class
-
 
 class CorpusRetrievalService:
     """Service for advanced corpus retrieval using HyDE and hybrid search."""
@@ -44,8 +32,6 @@ class CorpusRetrievalService:
     def __init__(self):
         # Use models from central config with new API
         self.hyde_model = config.PRIMARY_MODEL
-        self.llm_judge_model = config.PRIMARY_MODEL
-        logger.info(f"Initialized LLM as a Judge model: {config.PRIMARY_MODEL}")
         
         # Embedding model for queries - using new google-genai SDK
         self.embedding_model = config.EMBEDDING_MODEL
@@ -176,72 +162,48 @@ class CorpusRetrievalService:
                       f"length={len(chunk)} chars, "
                       f"preview={chunk[:100]}...")
         
-        # Step 5: Re-rank and select top chunks with LLM as a Judge
-        logger.info(f"Re-ranking and selecting top context with LLM as a Judge (judging {len(parent_chunks)} chunks)")
-        final_context, final_sources, judge_assessments = await self._select_top_context_with_llm_judge(
-            parent_chunks, sources, query
-        )
+        # Step 5: Filter and select top chunks based on hybrid search scores
+        logger.info(f"Filtering {len(parent_chunks)} chunks based on hybrid search scores (threshold: {config.RELEVANCE_THRESHOLD})")
         
-        logger.info(f"LLM Judge results: {len(final_context)} chunks selected from {len(parent_chunks)} candidates")
+        # Filter chunks by hybrid search score and take top ones
+        scored_chunks = list(zip(parent_chunks, sources))
+        scored_chunks.sort(key=lambda x: x[1].get("score", 0), reverse=True)
+        
+        # Filter by relevance threshold and take top chunks
+        relevant_chunks = [(chunk, source) for chunk, source in scored_chunks 
+                          if source.get("score", 0) >= config.RELEVANCE_THRESHOLD]
+        
+        final_pairs = relevant_chunks[:config.MAX_FINAL_CHUNKS_FOR_SYNTHESIS]
+        final_context = [chunk for chunk, _ in final_pairs]
+        final_sources = [source for _, source in final_pairs]
+        
+        # Extract hybrid search scores for routing decision
+        retrieval_scores = [source.get("score", 0.0) for source in final_sources]
+        best_retrieval_score = max(retrieval_scores) if retrieval_scores else 0.0
+        
+        logger.info(f"Selected {len(final_context)} chunks with scores {retrieval_scores}")
+        logger.info(f"Best hybrid score: {best_retrieval_score:.3f}, threshold: {config.RELEVANCE_THRESHOLD}")
         
         if final_context:
             # Log final selected chunks
             logger.info("Final selected chunks:")
             for i, (chunk, source) in enumerate(zip(final_context, final_sources)):
-                llm_score = source.get('llm_judge_score', 'N/A')
-                logger.info(f"  Final {i+1}: llm_score={llm_score}, "
+                score = source.get('score', 0.0)
+                logger.info(f"  Final {i+1}: score={score:.3f}, "
                           f"filename={source.get('filename', 'N/A')}, "
                           f"length={len(chunk)} chars")
-        else:
-            logger.warning("LLM Judge filtered out all chunks - checking scores")
-            if judge_assessments:
-                scores = [assessment.get('llm_judge_score', 0) for assessment in judge_assessments]
-                logger.warning(f"LLM Judge scores: min={min(scores):.1f}, "
-                             f"max={max(scores):.1f}, "
-                             f"avg={sum(scores)/len(scores):.1f}, "
-                             f"threshold={config.RELEVANCE_THRESHOLD}")
         
         logger.info(f"Retrieved {len(final_context)} context chunks from {len(set(s['filename'] for s in final_sources))} documents")
-        
-        # Extract LLM judge scores for routing decision
-        llm_judge_scores = [source.get("llm_judge_score", 0.0) for source in final_sources]
-        best_llm_judge_score = max(llm_judge_scores) if llm_judge_scores else 0.0
-        
-        # DEBUG: Log score extraction
-        logger.info(f"DEBUG: llm_judge_scores extracted: {llm_judge_scores}")
-        logger.info(f"DEBUG: best_llm_judge_score calculated: {best_llm_judge_score}")
-        if final_sources:
-            logger.info(f"DEBUG: first source keys: {list(final_sources[0].keys())}")
-            logger.info(f"DEBUG: first source llm_judge_score: {final_sources[0].get('llm_judge_score', 'NOT_FOUND')}")
-        
-        # Check if we fell back to hybrid search
-        has_llm_judge_fallback = any(s.get("llm_judge_fallback", False) for s in final_sources)
-        llm_judge_error = None
-        if has_llm_judge_fallback and final_sources:
-            llm_judge_error = final_sources[0].get("llm_judge_error", "Unknown error")
-        
-        logger.info(f"LLM Judge assessment: best_score={best_llm_judge_score:.1f}/10, threshold={config.RELEVANCE_THRESHOLD}")
-        if has_llm_judge_fallback:
-            logger.warning(f"LLM Judge failed, using hybrid search fallback: {llm_judge_error}")
         
         # Update state - let conditional routing decide next step based on quality
         updated_state = state.copy()
         updated_state.update({
             "retrieved_context": final_context,
             "document_sources": final_sources,
-            "retrieval_scores": [s.get("score", 0.0) for s in final_sources], # Hybrid search scores
-            "llm_judge_assessments": judge_assessments,
-            "best_llm_judge_score": best_llm_judge_score,
-            "step_count": state.get("step_count", 0) + 1,
-            # Add debug info to expose LLM Judge issues
-            "llm_judge_fallback": has_llm_judge_fallback,
-            "llm_judge_error": llm_judge_error
+            "retrieval_scores": retrieval_scores,
+            "best_retrieval_score": best_retrieval_score,
+            "step_count": state.get("step_count", 0) + 1
         })
-        
-        # DEBUG: Log the state update to verify it's being set correctly
-        logger.info(f"STATE UPDATE: Setting best_llm_judge_score={updated_state.get('best_llm_judge_score')} in state")
-        logger.info(f"STATE UPDATE: State keys after update: {list(updated_state.keys())}")
-        logger.info(f"STATE UPDATE: State type: {type(updated_state)}")
         
         return updated_state
     
@@ -363,116 +325,7 @@ Write a comprehensive paragraph (100-200 words) that would contain the answer:
         logger.info(f"Successfully retrieved {len(parent_chunks)} parent chunks from Weaviate")
         return parent_chunks, sources
     
-    async def _select_top_context_with_llm_judge(self, parent_chunks: List[str], sources: List[Dict[str, Any]], 
-                                                 query: str) -> Tuple[List[str], List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """
-        Selects the top context chunks using an LLM as a Judge model for re-ranking.
-        """
-        if not parent_chunks:
-            return [], [], []
 
-        logger.info(f"Judging {len(parent_chunks)} parent chunks with LLM Judge.")
-
-        prompt = self._build_llm_judge_prompt(query, parent_chunks)
-
-        try:
-            # Call the LLM Judge with structured output
-            response = await self.client.aio.models.generate_content(
-                model=self.llm_judge_model,
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": JudgeResults,
-                }
-            )
-            
-            # Use the parsed structured response directly
-            judge_results: JudgeResults = response.parsed
-            assessments = judge_results.assessments
-
-            # Combine chunks, sources, and assessments
-            scored_items = []
-            for i, (chunk, source) in enumerate(zip(parent_chunks, sources)):
-                # Find assessment for this chunk
-                assessment = next((a for a in assessments if a.chunk_index == i), None)
-                if assessment:
-                    source.update({
-                        "llm_judge_score": assessment.score,
-                        "llm_judge_explanation": assessment.explanation,
-                        "llm_judge_is_relevant": assessment.is_relevant,
-                        "reranked": True
-                    })
-                    scored_items.append((chunk, source, assessment.score))
-
-            # Sort by LLM judge score
-            scored_items.sort(key=lambda x: x[2], reverse=True)
-            
-            # Filter for relevant chunks and take top N
-            relevant_items = [item for item in scored_items if item[1].get("llm_judge_score", 0) >= config.RELEVANCE_THRESHOLD]
-            top_items = relevant_items[:config.MAX_FINAL_CHUNKS_FOR_SYNTHESIS]
-
-            final_chunks = [chunk for chunk, _, _ in top_items]
-            final_sources = [source for _, source, _ in top_items]
-            
-            best_score = max([item[2] for item in top_items]) if top_items else 0.0
-            logger.info(f"LLM Judge selected {len(final_chunks)} chunks. Best score: {best_score:.1f}/10")
-
-            return final_chunks, final_sources, final_sources # Return sources which contain the assessments
-
-        except Exception as e:
-            logger.error(f"LLM Judge re-ranking failed: {str(e)}")
-            logger.error(f"LLM Judge failure type: {type(e).__name__}")
-            
-            # Log additional context for debugging
-            logger.error(f"Query: {query[:100]}...")
-            logger.error(f"Chunks count: {len(parent_chunks)}")
-            if hasattr(e, 'response'):
-                logger.error(f"API response error: {e.response}")
-            
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
-            
-            logger.warning("Falling back to original hybrid search ranking.")
-            # Fallback to hybrid search scores if LLM judge fails
-            paired = list(zip(parent_chunks, sources))
-            paired.sort(key=lambda x: x[1].get("score", 0), reverse=True)
-            
-            top_chunks = [chunk for chunk, _ in paired[:config.MAX_FINAL_CHUNKS_FOR_SYNTHESIS]]
-            top_sources = [source for _, source in paired[:config.MAX_FINAL_CHUNKS_FOR_SYNTHESIS]]
-            
-            # Mark sources as fallback for debugging
-            for source in top_sources:
-                source["llm_judge_fallback"] = True
-                source["llm_judge_error"] = str(e)
-            
-            return top_chunks, top_sources, []
-
-    def _build_llm_judge_prompt(self, query: str, chunks: List[str]) -> str:
-        """Constructs the prompt for the LLM as a Judge."""
-
-        chunk_text = ""
-        for i, chunk in enumerate(chunks):
-            chunk_text += f'<document index="{i}">\n{chunk}\n</document>\n\n'
-
-        prompt = f"""
-You are a meticulous and impartial "LLM Judge". Your role is to evaluate a set of retrieved documents based on their relevance to a user's query.
-
-**User Query:**
-"{query}"
-
-**Documents to Evaluate:**
-{chunk_text}
-
-**Your Task:**
-For each document, provide a detailed assessment with the following fields:
-- chunk_index: The integer index of the document (0, 1, 2, etc.)
-- score: A relevance score from 1.0 (not relevant at all) to 10.0 (perfectly relevant)
-- explanation: A brief (1-2 sentences) justification for your score
-- is_relevant: true if the document is substantially relevant to answering the query, false otherwise
-
-Evaluate all documents systematically and provide your assessment.
-"""
-        return prompt
 
     def _create_empty_result_state(self, state: GraphState) -> GraphState:
         """

@@ -173,38 +173,33 @@ class AgentFramework:
     
     def _route_after_corpus_retrieval(self, state: GraphState) -> str:
         """
-        Intelligent routing after corpus retrieval using LLM as a Judge quality assessment.
+        Intelligent routing after corpus retrieval using hybrid search quality assessment.
         
         This implements sophisticated quality-based routing:
-        - High LLM Judge scores → proceed to synthesis  
-        - Low LLM Judge scores → fallback to web search
+        - High hybrid scores → proceed to synthesis  
+        - Low hybrid scores → fallback to web search
         - No results found → fallback to web search
         
         Satisfies assignment requirement with QUALITY assessment:
         "performing a web search... when the answer cannot be found in the provided PDFs"
         """
         retrieved_context = state.get("retrieved_context", [])
-        best_llm_judge_score = state.get("best_llm_judge_score", 0.0)
+        best_retrieval_score = state.get("best_retrieval_score", 0.0)
         session_id = state.get("session_id", "unknown")
-        
-        # DEBUG: Log what the routing logic is actually receiving
-        logger.info(f"ROUTING DEBUG: State keys received: {list(state.keys())}")
-        logger.info(f"ROUTING DEBUG: Raw best_llm_judge_score value: {state.get('best_llm_judge_score')} (type: {type(state.get('best_llm_judge_score'))})")
-        logger.info(f"ROUTING DEBUG: State type: {type(state)}")
         
         logger.info(f"Quality assessment (session: {session_id}): "
                    f"results={len(retrieved_context)}, "
-                   f"best_llm_judge_score={best_llm_judge_score:.1f}/10")
+                   f"best_hybrid_score={best_retrieval_score:.3f}/1.0")
         
         if not retrieved_context:
             logger.info(f"No corpus results found → web search fallback (session: {session_id})")
             return self._add_fallback_tracking(state, "no_results")
         
-        if best_llm_judge_score >= config.RELEVANCE_THRESHOLD:
-            logger.info(f"High relevance score ({best_llm_judge_score:.1f}/10) → synthesis (session: {session_id})")
+        if best_retrieval_score >= config.RELEVANCE_THRESHOLD:
+            logger.info(f"High relevance score ({best_retrieval_score:.3f}/1.0) → synthesis (session: {session_id})")
             return "synthesis"
         else:
-            logger.info(f"Low relevance score ({best_llm_judge_score:.1f}/10) → web search fallback (session: {session_id})")
+            logger.info(f"Low relevance score ({best_retrieval_score:.3f}/1.0) → web search fallback (session: {session_id})")
             return self._add_fallback_tracking(state, "low_relevance_score")
 
     def _add_fallback_tracking(self, state: GraphState, reason: str) -> str:
