@@ -30,10 +30,14 @@ class GraphState(TypedDict):
     # Context retrieval
     retrieved_context: List[str]  # RAG context chunks
     retrieval_scores: Optional[List[float]]  # Hybrid search scores for chunks
-    cross_encoder_scores: Optional[List[float]]  # Cross-encoder precision scores
-    best_cross_encoder_score: Optional[float]  # Highest cross-encoder score
+    llm_judge_scores: Optional[List[float]]  # LLM Judge scores for chunks (1-10 scale)
+    best_llm_judge_score: Optional[float]  # Highest LLM Judge score for routing
+    llm_judge_assessments: Optional[List[Dict[str, Any]]]  # Full LLM Judge evaluations
     parent_chunks: Optional[List[str]]  # Full parent context
     document_sources: Optional[List[Dict[str, Any]]]  # Source metadata
+    # Debug fields for LLM Judge issues
+    llm_judge_fallback: Optional[bool]  # Whether LLM Judge failed and used fallback
+    llm_judge_error: Optional[str]  # LLM Judge error message if failed
     
     # Web search
     web_context: Optional[str]  # Web search results

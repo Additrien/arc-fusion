@@ -187,6 +187,11 @@ class AgentFramework:
         best_llm_judge_score = state.get("best_llm_judge_score", 0.0)
         session_id = state.get("session_id", "unknown")
         
+        # DEBUG: Log what the routing logic is actually receiving
+        logger.info(f"ROUTING DEBUG: State keys received: {list(state.keys())}")
+        logger.info(f"ROUTING DEBUG: Raw best_llm_judge_score value: {state.get('best_llm_judge_score')} (type: {type(state.get('best_llm_judge_score'))})")
+        logger.info(f"ROUTING DEBUG: State type: {type(state)}")
+        
         logger.info(f"Quality assessment (session: {session_id}): "
                    f"results={len(retrieved_context)}, "
                    f"best_llm_judge_score={best_llm_judge_score:.1f}/10")
@@ -197,7 +202,7 @@ class AgentFramework:
         
         if best_llm_judge_score >= config.RELEVANCE_THRESHOLD:
             logger.info(f"High relevance score ({best_llm_judge_score:.1f}/10) → synthesis (session: {session_id})")
-            return "synthesize"
+            return "synthesis"
         else:
             logger.info(f"Low relevance score ({best_llm_judge_score:.1f}/10) → web search fallback (session: {session_id})")
             return self._add_fallback_tracking(state, "low_relevance_score")
@@ -212,7 +217,7 @@ class AgentFramework:
         if "fallback_reason" not in state:
             state["fallback_reason"] = reason
             
-        return "search_web"
+        return "web_search"
     
     def _add_custom_edges(self, graph: StateGraph):
         """Add any custom edges between agents."""
@@ -228,8 +233,8 @@ class AgentFramework:
                 retrieval_agent,
                 self._route_after_corpus_retrieval,
                 {
-                    "search_web": web_agent if web_agent else synthesis_agent,
-                    "synthesize": synthesis_agent
+                    "web_search": web_agent if web_agent else synthesis_agent,
+                    "synthesis": synthesis_agent
                 }
             )
             logger.debug(f"Added conditional edge: {retrieval_agent} -> [web_search|synthesis]")

@@ -7,19 +7,28 @@
 
 ## Critical Issues Identified 🚨
 
-### 1. **Incorrect Agent Routing** - HIGH PRIORITY
+### 1. **Incorrect Agent Routing** - ✅ FIXED
 **Problem**: Web search agent (`web_search_fallback_low_relevance_score`) triggers despite high corpus retrieval scores (0.92, 0.77, 0.66)
 
-**Root Cause Hypothesis**: 
-- LLM Judge scoring returns values between 0-1 
-- System expects confidence scores between 0-10
-- Score normalization mismatch causing high-quality results to appear as low-confidence
+**Root Cause Found**: 
+- **Agent name mismatch** in conditional routing logic
+- `_route_after_corpus_retrieval()` returned `"synthesize"` instead of registered agent name `"synthesis"`
+- `_route_after_corpus_retrieval()` returned `"search_web"` instead of registered agent name `"web_search"`
+- LangGraph routing failed, defaulting to web search regardless of LLM Judge scores
 
-**Investigation Points**:
-- [ ] Verify LLM Judge score range in `corpus_retrieval_agent.py`
-- [ ] Check confidence threshold settings in routing logic
-- [ ] Examine score normalization in agent service
-- [ ] Review agent path decision logic for corpus vs web routing
+**Fix Applied**: 
+- [x] Updated `app/agents/framework.py` routing method to return correct agent names
+- [x] `"synthesize"` → `"synthesis"` 
+- [x] `"search_web"` → `"web_search"`
+- [x] Updated routing map in `_add_custom_edges()` to match
+- [x] **Verified with unit tests**: High scores (8.5/10) → synthesis, Low scores (5.0/10) → web_search
+
+**Remaining Issue Identified**:
+- [x] **LLM Judge failing in production** - Falls back to hybrid search scores (0-1 range)
+- [x] **Citations still show 0-1 scores** instead of 1-10 LLM Judge scores  
+- [x] **LLM Judge works in isolation** but fails in real corpus retrieval pipeline
+- [x] **Fixed synthesis agent** to use `llm_judge_score` when available
+- [ ] **Root cause**: LLM Judge exception in production (needs log analysis or code restart)
 
 ### 2. **Performance Issues** - HIGH PRIORITY  
 **Problem**: 35+ seconds processing time is unacceptable for user experience

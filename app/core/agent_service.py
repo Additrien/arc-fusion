@@ -200,7 +200,11 @@ class AgentService:
                 "has_web_context": bool(final_state.get("web_context")),
                 "document_sources": len(final_state.get("document_sources", [])),
                 "web_sources": len(final_state.get("web_sources", [])),
-                "errors": final_state.get("error_info", {})
+                "errors": final_state.get("error_info", {}),
+                # Add LLM Judge debug info
+                "llm_judge_fallback": final_state.get("llm_judge_fallback", False),
+                "llm_judge_error": final_state.get("llm_judge_error"),
+                "best_llm_judge_score": final_state.get("best_llm_judge_score", 0.0)
             }
         }
 

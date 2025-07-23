@@ -204,10 +204,25 @@ class CorpusRetrievalService:
         logger.info(f"Retrieved {len(final_context)} context chunks from {len(set(s['filename'] for s in final_sources))} documents")
         
         # Extract LLM judge scores for routing decision
-        llm_judge_scores = [assessment.get("llm_judge_score", 0.0) for assessment in final_sources]
+        llm_judge_scores = [source.get("llm_judge_score", 0.0) for source in final_sources]
         best_llm_judge_score = max(llm_judge_scores) if llm_judge_scores else 0.0
         
+        # DEBUG: Log score extraction
+        logger.info(f"DEBUG: llm_judge_scores extracted: {llm_judge_scores}")
+        logger.info(f"DEBUG: best_llm_judge_score calculated: {best_llm_judge_score}")
+        if final_sources:
+            logger.info(f"DEBUG: first source keys: {list(final_sources[0].keys())}")
+            logger.info(f"DEBUG: first source llm_judge_score: {final_sources[0].get('llm_judge_score', 'NOT_FOUND')}")
+        
+        # Check if we fell back to hybrid search
+        has_llm_judge_fallback = any(s.get("llm_judge_fallback", False) for s in final_sources)
+        llm_judge_error = None
+        if has_llm_judge_fallback and final_sources:
+            llm_judge_error = final_sources[0].get("llm_judge_error", "Unknown error")
+        
         logger.info(f"LLM Judge assessment: best_score={best_llm_judge_score:.1f}/10, threshold={config.RELEVANCE_THRESHOLD}")
+        if has_llm_judge_fallback:
+            logger.warning(f"LLM Judge failed, using hybrid search fallback: {llm_judge_error}")
         
         # Update state - let conditional routing decide next step based on quality
         updated_state = state.copy()
@@ -217,8 +232,16 @@ class CorpusRetrievalService:
             "retrieval_scores": [s.get("score", 0.0) for s in final_sources], # Hybrid search scores
             "llm_judge_assessments": judge_assessments,
             "best_llm_judge_score": best_llm_judge_score,
-            "step_count": state.get("step_count", 0) + 1
+            "step_count": state.get("step_count", 0) + 1,
+            # Add debug info to expose LLM Judge issues
+            "llm_judge_fallback": has_llm_judge_fallback,
+            "llm_judge_error": llm_judge_error
         })
+        
+        # DEBUG: Log the state update to verify it's being set correctly
+        logger.info(f"STATE UPDATE: Setting best_llm_judge_score={updated_state.get('best_llm_judge_score')} in state")
+        logger.info(f"STATE UPDATE: State keys after update: {list(updated_state.keys())}")
+        logger.info(f"STATE UPDATE: State type: {type(updated_state)}")
         
         return updated_state
     
@@ -398,6 +421,17 @@ Write a comprehensive paragraph (100-200 words) that would contain the answer:
 
         except Exception as e:
             logger.error(f"LLM Judge re-ranking failed: {str(e)}")
+            logger.error(f"LLM Judge failure type: {type(e).__name__}")
+            
+            # Log additional context for debugging
+            logger.error(f"Query: {query[:100]}...")
+            logger.error(f"Chunks count: {len(parent_chunks)}")
+            if hasattr(e, 'response'):
+                logger.error(f"API response error: {e.response}")
+            
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            
             logger.warning("Falling back to original hybrid search ranking.")
             # Fallback to hybrid search scores if LLM judge fails
             paired = list(zip(parent_chunks, sources))
@@ -405,6 +439,11 @@ Write a comprehensive paragraph (100-200 words) that would contain the answer:
             
             top_chunks = [chunk for chunk, _ in paired[:config.MAX_FINAL_CHUNKS_FOR_SYNTHESIS]]
             top_sources = [source for _, source in paired[:config.MAX_FINAL_CHUNKS_FOR_SYNTHESIS]]
+            
+            # Mark sources as fallback for debugging
+            for source in top_sources:
+                source["llm_judge_fallback"] = True
+                source["llm_judge_error"] = str(e)
             
             return top_chunks, top_sources, []
 
