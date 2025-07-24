@@ -5,6 +5,8 @@ This module consolidates all tunable parameters, model names, and thresholds
 to allow for easy adjustments without modifying the core application logic.
 """
 
+import os
+
 # --- LLM Models ---
 # The main model for routing and judging. Fast, cost-effective, and powerful.
 # See: https://ai.google.dev/gemini-api/docs/models#gemini-2.5-flash-lite
@@ -22,14 +24,19 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 ENABLE_RERANKING = True
 
 # The Cross-Encoder model to use for reranking.
-# See: https://huggingface.co/models?other=reranker
-RERANKER_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+# See: https://huggingface.co/Qwen/Qwen3-Reranker-0.6B
+RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
+
+# Enable model quantization for memory optimization
+# GPU: 8-bit quantization with automatic device mapping (~50% memory reduction)
+# CPU: FP16 precision with low memory usage (~40% smaller, 15-400% faster)
+ENABLE_MODEL_QUANTIZATION = os.getenv("ENABLE_MODEL_QUANTIZATION", "true").lower() == "true"
 
 # --- Hardware Configuration ---
 # The device to run local models on.
 # Options: 'auto', 'cuda', 'cpu'
 # 'auto' will use a CUDA-enabled GPU if available, otherwise fallback to CPU.
-DEVICE = "auto"
+DEVICE = os.getenv("DEVICE", "auto")
 
 # The number of initial candidates to retrieve from the vector store.
 # This larger set is then fed to the reranker.

@@ -5,7 +5,7 @@ This agent implements the full RAG pipeline:
 1. HyDE (Hypothetical Document Embeddings) for query expansion
 2. Hybrid search (vector + BM25) using Weaviate
 3. Parent document retrieval for context
-4. Re-ranking and context selection
+4. Re-ranking with Qwen3-Reranker using direct transformers approach
 """
 
 import os
@@ -16,23 +16,32 @@ import torch
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
-from sentence_transformers.cross_encoder import CrossEncoder
-
-
-from .registry import AgentRegistry
-from .state import GraphState
-from ..core.vector_store import VectorStore
-from ..core.document_processor import DocumentProcessor
-from ..utils.logger import get_logger
-from ..utils.performance import time_async_function, time_async_block
-from ..utils.cache import embedding_cache, hyde_cache
-from .. import config
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from weaviate.classes.query import MetadataQuery
+from typing import List, Dict, Any, Optional
+import asyncio
+from app.agents.state import GraphState
+from app.agents.registry import AgentRegistry
+from app.core.vector_store import VectorStore
+from app.utils.logger import get_logger
+from app.utils.cache import embedding_cache, hyde_cache
+from app.utils.performance import time_async_block
+from app import config
 
 logger = get_logger('arc_fusion.agents.corpus_retrieval')
 
 
 class CorpusRetrievalService:
-    """Service for advanced corpus retrieval using HyDE and hybrid search."""
+    """
+    Service for retrieving and reranking documents from the corpus.
+    
+    This service handles:
+    1. Query embedding generation via Gemini API
+    2. Hypothetical Document Embedding (HyDE) generation
+    3. Hybrid search (vector + BM25) against Weaviate
+    4. Document reranking using Qwen3-Reranker model
+    5. Parent chunk reconstruction
+    """
     
     def __init__(self):
         # Use models from central config with new API
@@ -43,28 +52,78 @@ class CorpusRetrievalService:
         
         # Core services
         self.vector_store = VectorStore()
-        # Initialize DocumentProcessor to access parent chunks
-        self.document_processor = DocumentProcessor()
         
         # Configure Gemini with new API
         self.client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+
+        # Device detection for reranker model
+        if torch.cuda.is_available() and config.DEVICE in ["auto", "cuda"]:
+            self.device = "cuda"
+            logger.info(f"Using GPU: {torch.cuda.get_device_name()}")
+        else:
+            self.device = "cpu" 
+            logger.info("Using CPU for local models")
         
-                # Determine the device for local models
-        self.device = self._get_device()
-        
-        # Initialize the reranker model if enabled
+        # Initialize reranker components
         self.reranker_model = None
+        self.tokenizer = None
+        self.token_true_id = None
+        self.token_false_id = None
+        self.prefix_tokens = None
+        self.suffix_tokens = None
+        self.max_length = 8192
+        
         if config.ENABLE_RERANKING:
             try:
-                logger.info(f"Loading reranker model: {config.RERANKER_MODEL} onto device: {self.device}")
-                # Pass the determined device to the model
-                self.reranker_model = CrossEncoder(config.RERANKER_MODEL, device=self.device)
-                logger.info("Reranker model loaded successfully.")
+                self.tokenizer = AutoTokenizer.from_pretrained(config.RERANKER_MODEL, padding_side='left')
+                
+                # Configure model loading parameters
+                model_kwargs = {
+                    "torch_dtype": torch.float16 if self.device == "cuda" else torch.float32,
+                }
+                
+                if self.device == "cuda" and config.ENABLE_MODEL_QUANTIZATION:
+                    # Use new BitsAndBytesConfig approach - keep model on GPU
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        llm_int8_threshold=6.0  # Only offload outliers above threshold
+                        # Remove llm_int8_enable_fp32_cpu_offload=True to keep model on GPU
+                    )
+                    model_kwargs.update({
+                        "quantization_config": quantization_config,
+                        "device_map": "auto",
+                    })
+                    logger.info("Enabled 8-bit quantization with GPU placement for optimal performance")
+                elif self.device == "cpu" and config.ENABLE_MODEL_QUANTIZATION:
+                    model_kwargs.update({
+                        "torch_dtype": torch.float16,
+                        "low_cpu_mem_usage": True
+                    })
+                    logger.info("Enabled FP16 precision for CPU model")
+                
+                self.reranker_model = AutoModelForCausalLM.from_pretrained(
+                    config.RERANKER_MODEL, 
+                    **model_kwargs
+                ).eval()
+                
+                if self.device == "cuda" and "device_map" not in model_kwargs:
+                    self.reranker_model = self.reranker_model.cuda()
+                
+                self.token_false_id = self.tokenizer.convert_tokens_to_ids("no")
+                self.token_true_id = self.tokenizer.convert_tokens_to_ids("yes")
+                
+                # Prepare prefix and suffix tokens
+                prefix = "<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n<|im_start|>user\n"
+                suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+                self.prefix_tokens = self.tokenizer.encode(prefix, add_special_tokens=False)
+                self.suffix_tokens = self.tokenizer.encode(suffix, add_special_tokens=False)
+                
+                logger.info("Reranker model loaded successfully with BitsAndBytesConfig approach.")
             except Exception as e:
                 logger.error(f"Failed to load reranker model: {str(e)}")
 
     def _get_device(self) -> str:
-        """Determines the optimal device for Torch models."""
+        """Determines the optimal device for Torch models based on config and availability."""
         device = config.DEVICE
         if device == "auto":
             if torch.cuda.is_available():
@@ -72,420 +131,288 @@ class CorpusRetrievalService:
                 logger.info("Auto-detected CUDA-enabled GPU. Using 'cuda' device.")
             else:
                 selected_device = "cpu"
-                logger.info("No CUDA-enabled GPU found. Using 'cpu' device.")
+                logger.info("No CUDA-enabled GPU found. Using 'cpu' device for local models.")
         elif device == "cuda":
             if not torch.cuda.is_available():
-                logger.warning("Device was set to 'cuda' but no GPU is available. Falling back to 'cpu'.")
+                logger.warning("Device was configured to 'cuda' but no GPU is available. Falling back to 'cpu'.")
                 selected_device = "cpu"
             else:
                 selected_device = "cuda"
         else:
             selected_device = "cpu"
         
-        logger.info(f"Final device selected for local models: {selected_device.upper()}")
         return selected_device
 
-    @time_async_function("corpus_retrieval.retrieve_and_rerank")
-    async def retrieve_and_rerank(self, state: GraphState) -> GraphState:
-        """
-        Execute the full RAG pipeline: HyDE -> Hybrid Search -> Parent Retrieval -> LLM Judging.
-        
-        Args:
-            state: Current graph state
-            
-        Returns:
-            Updated state with retrieved context and sources
-        """
-        query = state["query"]
-        session_id = state["session_id"]
-        
-        logger.info(f"Starting corpus retrieval for session {session_id}")
-        logger.info(f"Query: {query}")
-        
-        try:
-            # Add timeout for the entire retrieval process
-            from app.config import CORPUS_RETRIEVAL_TIMEOUT
-            
-            # Wrap the entire process in a timeout
-            return await asyncio.wait_for(
-                self._execute_retrieval_pipeline(state),
-                timeout=CORPUS_RETRIEVAL_TIMEOUT
-            )
-            
-        except asyncio.TimeoutError:
-            logger.error(f"Corpus retrieval timed out after {CORPUS_RETRIEVAL_TIMEOUT}s")
-            return self._create_timeout_state(state)
-        except Exception as e:
-            logger.error(f"Error in corpus retrieval: {str(e)}")
-            logger.error(f"Exception type: {type(e).__name__}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return self._create_error_state(state, e)
-    
-    @time_async_function("corpus_retrieval.execute_pipeline")
-    async def _execute_retrieval_pipeline(self, state: GraphState) -> GraphState:
-        """Execute the core retrieval pipeline with all steps."""
-        query = state["query"]
-        session_id = state["session_id"]
-        
-        # Step 1 & 2: Parallel HyDE expansion and embedding generation
-        logger.info("Performing parallel HyDE expansion and embedding generation")
-        hyde_task = self._generate_hypothetical_document(query)
-        embedding_task = self._generate_query_embedding(query)  # Use original query for embedding
-        
-        # Wait for both to complete
-        expanded_query, query_embedding = await asyncio.gather(hyde_task, embedding_task)
-        logger.info(f"HyDE expanded query length: {len(expanded_query)} chars")
-        logger.info(f"Query embedding generated: {len(query_embedding)} dimensions")
-        
-        # Step 3: Hybrid search on child chunks
-        logger.info(f"Performing hybrid search with limit={config.MAX_CHILD_CHUNKS_RETRIEVAL}")
-        child_results = await self.vector_store.hybrid_search(
-            query=expanded_query,
-            query_embedding=query_embedding,
-            limit=config.MAX_CHILD_CHUNKS_RETRIEVAL
+    def format_instruction(self, instruction: str, query: str, doc: str) -> str:
+        """Format instruction according to Qwen3-Reranker format."""
+        if instruction is None:
+            instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+        return f"<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {doc}"
+
+    def process_inputs(self, pairs: List[str]) -> dict:
+        """Process input pairs for the Qwen3-Reranker model."""
+        inputs = self.tokenizer(
+            pairs, padding=False, truncation='longest_first',
+            return_attention_mask=False, 
+            max_length=self.max_length - len(self.prefix_tokens) - len(self.suffix_tokens)
         )
         
-        logger.info(f"Hybrid search returned {len(child_results)} child results")
+        for i, ele in enumerate(inputs['input_ids']):
+            inputs['input_ids'][i] = self.prefix_tokens + ele + self.suffix_tokens
+            
+        inputs = self.tokenizer.pad(inputs, padding=True, return_tensors="pt", max_length=self.max_length)
         
-        if not child_results:
-            logger.warning("No results found in corpus - checking database stats")
-            # Add database diagnostics
-            try:
-                stats = await self.vector_store.get_database_stats()
-                logger.warning(f"Database contains {stats['child_chunks']} child chunks and {stats['parent_chunks']} parent chunks across {stats['unique_documents']} documents")
+        for key in inputs:
+            inputs[key] = inputs[key].to(self.reranker_model.device)
+            
+        return inputs
+
+    @torch.no_grad()
+    def compute_logits(self, inputs: dict) -> List[float]:
+        """Compute reranking scores using the Qwen3-Reranker approach."""
+        batch_scores = self.reranker_model(**inputs).logits[:, -1, :]
+        true_vector = batch_scores[:, self.token_true_id]
+        false_vector = batch_scores[:, self.token_false_id]
+        batch_scores = torch.stack([false_vector, true_vector], dim=1)
+        batch_scores = torch.nn.functional.log_softmax(batch_scores, dim=1)
+        scores = batch_scores[:, 1].exp().tolist()
+        return scores
+
+    @time_async_block("corpus_retrieval.retrieve_and_rerank")
+    async def retrieve_and_rerank(self, state: GraphState) -> GraphState:
+        """
+        Execute the full RAG pipeline: HyDE -> Hybrid Search -> Parent Retrieval -> Reranking.
+        
+        Args:
+            state: Current graph state containing the query and session info
+            
+        Returns:
+            Updated state with retrieved and reranked content
+        """
+        query = state.get("query", "")
+        session_id = state.get("session_id", "unknown")
+        
+        logger.info(f"Starting corpus retrieval for session {session_id}")
+        
+        try:
+            async with time_async_block("corpus_retrieval.execute_pipeline"):
+                # Step 1: Generate hypothetical document for query expansion (HyDE)
+                expanded_query = await self._generate_hypothetical_document(query)
                 
-                # List available documents
-                documents = await self.vector_store.get_all_documents()
-                logger.warning(f"Available documents: {[doc['filename'] for doc in documents[:5]]}")
+                # Step 2: Generate embedding for the expanded query
+                query_embedding = await self._generate_query_embedding(expanded_query)
                 
-            except Exception as e:
-                logger.error(f"Failed to get database stats: {str(e)}")
+                # Step 3: Perform hybrid search using Weaviate
+                child_results = await self.vector_store.hybrid_search(query, query_embedding, limit=config.INITIAL_RETRIEVAL_K)
+                
+                if not child_results:
+                    logger.warning("No results found from hybrid search")
+                    return self._create_empty_result(state)
+                
+                logger.info(f"Retrieved {len(child_results)} child chunks from hybrid search")
+                
+                # Step 4: Get parent chunks for better context
+                parent_chunks, sources = await self._get_parent_chunks(child_results)
+                
+                if not parent_chunks:
+                    logger.warning("No parent chunks found")
+                    return self._create_empty_result(state)
+                
+                logger.info(f"Retrieved {len(parent_chunks)} unique parent chunks for reranking.")
+
+            # Step 5: Rerank the parent chunks for precision if enabled
+            if config.ENABLE_RERANKING and self.reranker_model and parent_chunks and self.tokenizer:
+                logger.info(f"Reranking {len(parent_chunks)} chunks with model {config.RERANKER_MODEL}...")
+                
+                # Format pairs according to Qwen3-Reranker format
+                task_instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+                formatted_pairs = [
+                    self.format_instruction(task_instruction, query, chunk) 
+                    for chunk in parent_chunks
+                ]
+                
+                try:
+                    # Process in small batches to avoid CUDA out of memory
+                    batch_size = 2 if self.device == "cuda" else 4  # Single items for GPU to avoid OOM
+                    rerank_scores = []
+                    
+                    for i in range(0, len(formatted_pairs), batch_size):
+                        batch = formatted_pairs[i:i + batch_size]
+                        logger.info(f"Processing reranking batch {i//batch_size + 1}/{(len(formatted_pairs) + batch_size - 1)//batch_size}")
+                        
+                        # Process batch
+                        batch_inputs = self.process_inputs(batch)
+                        batch_scores = self.compute_logits(batch_inputs)
+                        rerank_scores.extend(batch_scores)
+                    
+                    logger.info(f"Successfully reranked {len(rerank_scores)} chunks in batches")
+                    
+                except Exception as e:
+                    logger.error(f"Reranking failed: {e}, using uniform scores")
+                    rerank_scores = [0.5] * len(parent_chunks)  # Default neutral scores
+                
+                # Combine scores with original chunks and sources
+                scored_parent_pairs = list(zip(rerank_scores, parent_chunks, sources))
+                
+                # Sort by the new reranker score in descending order
+                scored_parent_pairs.sort(key=lambda x: x[0], reverse=True)
+                
+                logger.info(f"Top 3 reranked scores: {[f'{s[0]:.3f}' for s in scored_parent_pairs[:3]]}")
+                
+                # Select the top K results after reranking
+                final_pairs = scored_parent_pairs[:config.RERANKER_TOP_K]
+                final_context = [pair[1] for pair in final_pairs]
+                retrieval_scores = [pair[0] for pair in final_pairs]
+                
+                # Add scores to the sources for citation display
+                final_sources = []
+                for i, (score, chunk, source) in enumerate(final_pairs):
+                    source_with_score = source.copy()
+                    source_with_score['score'] = float(score)  # Add reranker score
+                    final_sources.append(source_with_score)
+                    
+            else:
+                # No reranking - use all parent chunks up to the limit
+                final_context = parent_chunks[:config.RERANKER_TOP_K]
+                retrieval_scores = [1.0] * len(final_context)  # Default high scores
+                
+                # Add default scores to sources
+                final_sources = []
+                for i, source in enumerate(sources[:config.RERANKER_TOP_K]):
+                    source_with_score = source.copy()
+                    source_with_score['score'] = 1.0  # Default high score when no reranking
+                    final_sources.append(source_with_score)
+                
+            best_retrieval_score = max(retrieval_scores) if retrieval_scores else 0.0
             
-            return self._create_empty_result_state(state)
-        
-        # Log sample results for debugging
-        logger.info("Sample hybrid search results:")
-        for i, result in enumerate(child_results[:3]):  # Log first 3 results
-            score = result.get('score', 0)
-            distance = result.get('distance', 0)
+            logger.info(f"Selected {len(final_context)} final chunks. Best score: {best_retrieval_score:.3f}")
             
-            # Handle cases where score/distance might be None
-            score_str = f"{score:.3f}" if score is not None else "N/A"
-            distance_str = f"{distance:.3f}" if distance is not None else "N/A"
+            # Update state for the orchestrator
+            updated_state = state.copy()
+            updated_state.update({
+                "retrieved_context": final_context,
+                "document_sources": final_sources,
+                "retrieval_scores": retrieval_scores,
+                "best_retrieval_score": best_retrieval_score,
+                "step_count": state.get("step_count", 0) + 1,
+                "tasks_completed": state.get("tasks_completed", []) + ["corpus_retrieval"]
+            })
             
-            logger.info(f"  Result {i+1}: score={score_str}, "
-                      f"distance={distance_str}, "
-                      f"filename={result.get('filename', 'N/A')}, "
-                      f"content_preview={result.get('content', '')[:100]}...")
-        
-        # Step 4: Group by parent chunks and retrieve context
-        logger.info("Retrieving parent chunks for context")
-        parent_chunks, sources = await self._retrieve_parent_context(child_results)
-        logger.info(f"Retrieved {len(parent_chunks)} parent chunks from {len(sources)} sources")
-        
-        if not parent_chunks:
-            logger.warning("No parent chunks found - this indicates parent-child relationship issues")
-            # Log some child results for debugging
-            logger.warning("Sample child results that failed to resolve to parents:")
-            for i, result in enumerate(child_results[:3]):
-                logger.warning(f"  Child {i+1}: parent_id={result.get('parent_id')}, "
-                             f"document_id={result.get('document_id')}, "
-                             f"filename={result.get('filename')}")
-            return self._create_empty_result_state(state)
-        
-        # Log parent chunk info
-        logger.info("Retrieved parent chunks:")
-        for i, (chunk, source) in enumerate(zip(parent_chunks[:3], sources[:3])):  # Log first 3
-            score = source.get('score', 0)
-            score_str = f"{score:.3f}" if score is not None else "N/A"
+            return updated_state
             
-            logger.info(f"  Parent {i+1}: score={score_str}, "
-                      f"filename={source.get('filename', 'N/A')}, "
-                      f"length={len(chunk)} chars, "
-                      f"preview={chunk[:100]}...")
-        
-        # Step 5: Filter and select top chunks based on hybrid search scores
-        logger.info(f"Filtering {len(parent_chunks)} chunks based on hybrid search scores (threshold: {config.RELEVANCE_THRESHOLD})")
-        
-        # Filter chunks by hybrid search score and take top ones
-        scored_chunks = list(zip(parent_chunks, sources))
-        scored_chunks.sort(key=lambda x: x[1].get("score", 0), reverse=True)
-        
-        # Filter by relevance threshold and take top chunks
-        relevant_chunks = [(chunk, source) for chunk, source in scored_chunks 
-                          if source.get("score", 0) >= config.RELEVANCE_THRESHOLD]
-        
-        final_pairs = relevant_chunks[:config.MAX_FINAL_CHUNKS_FOR_SYNTHESIS]
-        final_context = [chunk for chunk, _ in final_pairs]
-        final_sources = [source for _, source in final_pairs]
-        
-        # Extract hybrid search scores for routing decision
-        retrieval_scores = [source.get("score", 0.0) for source in final_sources]
-        best_retrieval_score = max(retrieval_scores) if retrieval_scores else 0.0
-        
-        logger.info(f"Selected {len(final_context)} chunks with scores {retrieval_scores}")
-        logger.info(f"Best hybrid score: {best_retrieval_score:.3f}, threshold: {config.RELEVANCE_THRESHOLD}")
-        
-        if final_context:
-            # Log final selected chunks
-            logger.info("Final selected chunks:")
-            for i, (chunk, source) in enumerate(zip(final_context, final_sources)):
-                score = source.get('score', 0.0)
-                logger.info(f"  Final {i+1}: score={score:.3f}, "
-                          f"filename={source.get('filename', 'N/A')}, "
-                          f"length={len(chunk)} chars")
-        
-        logger.info(f"Retrieved {len(final_context)} context chunks from {len(set(s['filename'] for s in final_sources))} documents")
-        
-        # Update state - let conditional routing decide next step based on quality
-        updated_state = state.copy()
-        updated_state.update({
-            "retrieved_context": final_context,
-            "document_sources": final_sources,
-            "retrieval_scores": retrieval_scores,
-            "best_retrieval_score": best_retrieval_score,
-            "step_count": state.get("step_count", 0) + 1,
-            "tasks_completed": state.get("tasks_completed", []) + ["corpus_retrieval"]
-        })
-        
-        return updated_state
+        except Exception as e:
+            logger.error(f"Error in corpus retrieval: {str(e)}")
+            return self._create_error_result(state, str(e))
     
-    @time_async_function("corpus_retrieval.hyde_expansion")
+    @time_async_block("corpus_retrieval.hyde_expansion")
     async def _generate_hypothetical_document(self, query: str) -> str:
-        """
-        Generate a hypothetical document using HyDE (Hypothetical Document Embeddings).
-        
-        This expands the query by generating a hypothetical document that would contain
-        the answer, improving retrieval performance.
-        """
-        # Check cache first
         cache_key = f"hyde:{query}"
         cached_result = hyde_cache.get(cache_key)
         if cached_result:
-            logger.info("Using cached HyDE expansion")
             return cached_result
         
-        hyde_prompt = f"""
-You are an expert academic researcher. Given a research question, write a detailed paragraph that would likely appear in an academic paper answering this question.
-
-Write as if you are extracting from a real research paper. Include specific methodologies, results, and technical details that would typically appear in academic literature.
-
-Research Question: {query}
-
-Write a comprehensive paragraph (100-200 words) that would contain the answer:
-"""
-        
+        hyde_prompt = f"You are an expert academic researcher. Given a research question, write a detailed paragraph that would likely appear in an academic paper answering this question.\n\nResearch Question: {query}\n\nWrite a comprehensive paragraph (100-200 words) that would contain the answer:"
         try:
-            # Define the generation configuration to disable thinking
-            generation_config = {
-                "thinking_config": {
-                    "thinking_budget": 0
-                }
-            }
-
             response = await self.client.aio.models.generate_content(
                 model=self.hyde_model, 
                 contents=hyde_prompt,
-                generation_config=generation_config,
+                generation_config={"thinking_config": {"thinking_budget": 0}},
             )
             hypothetical_doc = response.text.strip()
-            
-            # Combine original query with hypothetical document for better retrieval
             expanded_query = f"{query} {hypothetical_doc}"
-            
-            # Cache the result
             hyde_cache.set(cache_key, expanded_query)
-            
-            logger.debug(f"HyDE expansion generated {len(hypothetical_doc)} characters")
             return expanded_query
-            
         except Exception as e:
             logger.warning(f"HyDE generation failed, using original query: {str(e)}")
             return query
 
-    @time_async_function("corpus_retrieval.embedding_generation")
+    @time_async_block("corpus_retrieval.embedding_generation")
     async def _generate_query_embedding(self, query: str) -> List[float]:
-        """Generate embedding for the query using the new google-genai SDK."""
-        # Check cache first
         cache_key = f"embedding:{query}"
         cached_result = embedding_cache.get(cache_key)
         if cached_result:
-            logger.info("Using cached query embedding")
             return cached_result
         
         try:
-            # Use the new google-genai SDK for embeddings
             response = await self.client.aio.models.embed_content(
                 model=self.embedding_model,
                 contents=query,
-                config=types.EmbedContentConfig(
-                    task_type="RETRIEVAL_QUERY",
-                    output_dimensionality=768  # Fix dimension for consistency
-                )
+                config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY", output_dimensionality=768)
             )
-            
-            # Extract embedding values - the structure should be response.embeddings[0].values
-            if hasattr(response, 'embeddings') and response.embeddings:
-                embedding = list(response.embeddings[0].values)
-            elif hasattr(response, 'embedding'):
-                embedding = list(response.embedding.values)
-            else:
-                raise ValueError("Unexpected embedding response structure")
-            
-            # Cache the result
+            embedding = response.embedding
             embedding_cache.set(cache_key, embedding)
-                
-            logger.debug(f"Generated query embedding with {len(embedding)} dimensions")
             return embedding
-            
         except Exception as e:
-            logger.error(f"Failed to generate query embedding: {str(e)}")
-            raise
-    
-    @time_async_function("corpus_retrieval.parent_retrieval")
-    async def _retrieve_parent_context(self, child_results: List[Dict[str, Any]]) -> Tuple[List[str], List[Dict[str, Any]]]:
-        """
-        Retrieve parent chunks for the top child results.
-        
-        Args:
-            child_results: Results from hybrid search on child chunks
-            
-        Returns:
-            Tuple of (parent_chunks, source_metadata)
-        """
+            logger.warning(f"Embedding generation failed, using empty embedding: {str(e)}")
+            return [0.0] * 768  # Return zero embedding as fallback
+
+    @time_async_block("corpus_retrieval.parent_retrieval")
+    async def _get_parent_chunks(self, child_results: List[dict]) -> Tuple[List[str], List[dict]]:
+        """Get parent chunks from child search results."""
         parent_chunks = []
         sources = []
-        seen_parents = set()
+        seen_parent_ids = set()
         
-        # Group child results by parent_id and take best score per parent
-        parent_groups = {}
         for result in child_results:
-            parent_id = result["parent_id"]
-            if parent_id not in parent_groups or result["score"] > parent_groups[parent_id]["score"]:
-                parent_groups[parent_id] = result
+            parent_id = result.get('parent_id')
+            if parent_id and parent_id not in seen_parent_ids:
+                parent_chunk = await self.vector_store.get_parent_chunk_by_id(parent_id)
+                if parent_chunk:  # parent_chunk is already the content string
+                    parent_chunks.append(parent_chunk)
+                    sources.append({
+                        'parent_id': parent_id,
+                        'document_id': result.get('document_id'),  # Get from original result
+                        'filename': result.get('filename', 'Unknown'),
+                        'chunk_index': result.get('parent_index', 0)
+                    })
+                    seen_parent_ids.add(parent_id)
         
-        # Sort by score and take top parents
-        top_parents = sorted(parent_groups.values(), key=lambda x: x["score"], reverse=True)
-        
-        logger.info(f"Attempting to retrieve {len(top_parents[:config.MAX_PARENT_CHUNKS_FOR_JUDGING])} parent chunks")
-        
-        for result in top_parents[:config.MAX_PARENT_CHUNKS_FOR_JUDGING]:  # Get extra for judging
-            parent_id = result["parent_id"]
-            
-            if parent_id not in seen_parents:
-                # Use VectorStore to get parent chunk from Weaviate instead of in-memory store
-                try:
-                    parent_chunk = await self.vector_store.get_parent_chunk_by_id(parent_id)
-                    
-                    if parent_chunk:
-                        parent_chunks.append(parent_chunk)
-                        sources.append({
-                            "parent_id": parent_id,
-                            "document_id": result["document_id"],
-                            "filename": result["filename"],
-                            "parent_index": result["parent_index"],
-                            "score": result["score"],
-                            "distance": result.get("distance", 0.0)
-                        })
-                        seen_parents.add(parent_id)
-                        logger.debug(f"Retrieved parent chunk for parent_id: {parent_id}")
-                    else:
-                        logger.warning(f"Parent chunk not found in Weaviate for parent_id: {parent_id}")
-                        
-                except Exception as e:
-                    logger.error(f"Error retrieving parent chunk {parent_id}: {str(e)}")
-        
-        logger.info(f"Successfully retrieved {len(parent_chunks)} parent chunks from Weaviate")
         return parent_chunks, sources
-    
 
-
-    def _create_empty_result_state(self, state: GraphState) -> GraphState:
-        """
-        Create state when no results are found.
-        
-        The conditional routing will automatically detect empty retrieved_context
-        and route to web search - no manual intent setting needed.
-        """
+    def _create_empty_result(self, state: GraphState) -> GraphState:
+        """Create an empty result state."""
         updated_state = state.copy()
         updated_state.update({
             "retrieved_context": [],
             "document_sources": [],
             "retrieval_scores": [],
-            "step_count": state.get("step_count", 0) + 1
-            # Note: No manual intent - conditional routing handles fallback to web search
-        })
-        return updated_state
-    
-    def _create_error_state(self, state: GraphState, error: Exception) -> GraphState:
-        """
-        Create state when an error occurs.
-        
-        With empty retrieved_context, conditional routing will attempt web search fallback.
-        """
-        updated_state = state.copy()
-        updated_state.update({
-            "retrieved_context": [],
-            "document_sources": [],
-            "retrieval_scores": [],
+            "best_retrieval_score": 0.0,
             "step_count": state.get("step_count", 0) + 1,
-            "error_info": {
-                "retrieval_error": str(error)
-            }
-            # Note: No manual intent - let conditional routing decide (likely web search fallback)
+            "tasks_completed": state.get("tasks_completed", []) + ["corpus_retrieval"]
         })
         return updated_state
 
-    def _create_timeout_state(self, state: GraphState) -> GraphState:
-        """Create state when corpus retrieval times out."""
+    def _create_error_result(self, state: GraphState, error_message: str) -> GraphState:
+        """Create an error result state."""
         updated_state = state.copy()
         updated_state.update({
             "retrieved_context": [],
             "document_sources": [],
             "retrieval_scores": [],
+            "best_retrieval_score": 0.0,
+            "errors": state.get("errors", {}).copy(),
             "step_count": state.get("step_count", 0) + 1,
-            "error_info": {
-                "retrieval_error": "Corpus retrieval timed out"
-            }
+            "tasks_completed": state.get("tasks_completed", []) + ["corpus_retrieval"]
         })
+        updated_state["errors"]["retrieval_error"] = error_message
         return updated_state
 
 
-# Create service instance
+# Create the service instance
 corpus_retrieval_service = CorpusRetrievalService()
-
 
 @AgentRegistry.register(
     name="corpus_retrieval",
     capabilities=["document_search", "rag", "hybrid_search"],
-    priority=10
+    dependencies=["routing"]
 )
-def corpus_retrieval_agent(state: GraphState) -> GraphState:
+async def corpus_retrieval_agent(state: GraphState) -> GraphState:
     """
-    Advanced corpus retrieval agent implementing HyDE + Hybrid Search + Re-ranking.
+    Advanced corpus retrieval agent using HyDE, hybrid search, and reranking.
     
-    This agent provides the core RAG functionality with state-of-the-art retrieval methods.
+    This agent implements a sophisticated RAG pipeline that combines:
+    - HyDE for query expansion
+    - Hybrid search (vector + BM25) for recall
+    - Cross-encoder reranking for precision
     """
-    # Note: LangGraph expects sync functions, so we need to handle async
-    import asyncio
-    
-    # Check if we're already in an event loop
-    try:
-        loop = asyncio.get_running_loop()
-        # If we're in a running loop, use run_coroutine_threadsafe
-        import concurrent.futures
-        future = asyncio.run_coroutine_threadsafe(
-            corpus_retrieval_service.retrieve_and_rerank(state),
-            loop
-        )
-        return future.result()
-    except RuntimeError:
-        # No running loop, safe to use run_until_complete
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        return loop.run_until_complete(corpus_retrieval_service.retrieve_and_rerank(state)) 
+    return await corpus_retrieval_service.retrieve_and_rerank(state)

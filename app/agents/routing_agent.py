@@ -93,6 +93,7 @@ Analyze this user query and classify it into ONE of these categories:
 
 **retrieve_corpus**: Query can be answered from academic papers in our database
 - Examples: "What did Zhang et al. report about prompt templates?", "Which method achieved highest accuracy in the Spider dataset?", "Explain the methodology used in paper X"
+- ALSO INCLUDES general topic questions that could be found in academic papers: "What are SQL challenges?", "What methods exist for text-to-SQL?", "How does neural machine translation work?"
 
 **search_web**: Query requires current/external information not in papers
 - Examples: "What did OpenAI release this month?", "Latest developments in LLMs", "Current state of AI research"
@@ -101,12 +102,14 @@ Analyze this user query and classify it into ONE of these categories:
 **corpus_and_web_search**: Query explicitly asks to combine internal knowledge with web search results.
 - Examples: "Compare the findings in your documents with what's on the web about text-to-sql", "What are text-to-SQL challenges based on your internal knowledge and your search on internet?"
 
-**clarify**: Query is too vague or ambiguous to process
-- Examples: "How many examples are enough?", "What's the best method?", "How does it work?"
-- Missing context: dataset, method, paper reference, specific domain
+**clarify**: Query is too vague or ambiguous to process AND lacks sufficient context
+- Examples: "How many examples are enough?" (without specifying for what task), "What's the best method?" (without domain context), "How does it work?" (without specifying what "it" refers to)
+- Missing critical context that makes the query unanswerable
 
 **end**: Conversation ending or greeting
 - Examples: "thanks", "goodbye", "that's all", "hello"
+
+IMPORTANT: General topic questions about research domains should be classified as "retrieve_corpus", not "clarify". Only use "clarify" for genuinely ambiguous queries that lack essential context.
 
 User Query: "{query}"
 

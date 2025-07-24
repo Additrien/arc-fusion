@@ -1,11 +1,11 @@
-version: '3.8'
-
 services:
   app:
-    # Build using the GPU-specific Dockerfile
     build:
       context: .
       dockerfile: Dockerfile.gpu
+    environment:
+      - DEVICE=auto  # Auto-detect GPU/CPU for local models
+      - ENABLE_MODEL_QUANTIZATION=true  # Enable 8-bit GPU quantization or FP16 CPU optimization
     deploy:
       resources:
         reservations:

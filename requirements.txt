@@ -12,7 +12,9 @@ langchain-google-genai==2.1.8
 # --- Local AI Models & Reranking ---
 # Explicitly declared for the reranker agent and hardware management
 torch
-sentence-transformers
+transformers>=4.51.0  # Required for Qwen3 support
+accelerate  # For memory-efficient model loading and quantization
+bitsandbytes  # For 8-bit and 4-bit quantization
 
 # --- Vector Database & Embeddings ---
 weaviate-client==4.16.3

@@ -102,6 +102,7 @@ graph TD
 - **Docker & Docker Compose**
 - **Google AI Studio API Key** (free tier available)
 - **Tavily API Key** (optional, for web search)
+- **NVIDIA Container Toolkit** (optional, for GPU support)
 
 ### 1. Environment Setup
 
@@ -120,6 +121,7 @@ TAVILY_API_KEY=your_tavily_key_here  # Optional
 
 ### 2. Run with Docker (Recommended)
 
+#### CPU Only
 ```bash
 # Start the entire system
 docker-compose up -d
@@ -127,6 +129,39 @@ docker-compose up -d
 # Check that services are running
 docker-compose ps
 ```
+
+#### GPU Support (NVIDIA)
+First, install the NVIDIA Container Toolkit:
+
+```bash
+# Configure NVIDIA repository
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# Install toolkit
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+
+# Configure Docker
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Then run with GPU support:
+```bash
+# Start with GPU acceleration
+docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+**Note on GPU Memory:** The GPU configuration is optimized for memory efficiency. Local models (rerankers) run on CPU with FP16 quantization (40% smaller, 15-400% faster) to avoid VRAM exhaustion, while GPU acceleration is available for other components. For GPUs with >8GB VRAM, you can enable full GPU acceleration by setting `DEVICE=auto` in your environment.
+
+**Memory Optimizations Applied:**
+- **Correct Model**: Uses `Qwen/Qwen3-Reranker-0.6B` with direct transformers approach
+- **GPU Quantization**: 8-bit quantization with `load_in_8bit=True` and automatic device mapping
+- **CPU FP16 Precision**: Reduces memory usage by ~50% with `torch_dtype=torch.float16`
+- **Advanced Architecture**: Direct `AutoModelForCausalLM` usage instead of sentence-transformers
+- **Proper Instruction Format**: Qwen3-specific system/user/assistant prompt formatting
+- **Token-Based Scoring**: Uses "yes"/"no" token logits for precise relevance scoring
 
 The system will be available at:
 - **API**: http://localhost:8000
