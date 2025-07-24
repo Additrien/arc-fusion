@@ -42,14 +42,22 @@ DEVICE = os.getenv("DEVICE", "auto")
 # This larger set is then fed to the reranker.
 INITIAL_RETRIEVAL_K = 25
 
+# The number of top-scoring chunks from hybrid search to send to the reranker.
+# This reduces GPU load by filtering out lower-quality chunks before reranking.
+PRE_RERANKER_TOP_K = 8
+
 # The final number of top-ranked documents to pass to the synthesis agent.
-RERANKER_TOP_K = 5
+RERANKER_TOP_K = 4
 
 
 # --- Hybrid Search Relevance ---
 # On a scale of 0-1, the minimum hybrid score for a chunk to be considered "relevant".
 # This is used in the framework for routing to synthesis vs. web search.
 RELEVANCE_THRESHOLD = 0.7
+
+# Minimum score threshold for individual chunks (filters out very low quality chunks)
+# Chunks with scores below this threshold are discarded before reranking or synthesis
+MIN_CHUNK_SCORE = 0.4
 
 
 # --- Routing Agent ---

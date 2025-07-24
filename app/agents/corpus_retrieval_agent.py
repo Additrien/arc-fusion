@@ -212,23 +212,47 @@ class CorpusRetrievalService:
                 logger.info(f"Retrieved {len(child_results)} child chunks from hybrid search")
                 
                 # Step 4: Get parent chunks for better context
-                parent_chunks, sources = await self._get_parent_chunks(child_results)
+                parent_chunks, sources, hybrid_scores = await self._get_parent_chunks(child_results)
                 
                 if not parent_chunks:
                     logger.warning("No parent chunks found")
                     return self._create_empty_result(state)
                 
-                logger.info(f"Retrieved {len(parent_chunks)} unique parent chunks for reranking.")
+                logger.info(f"Retrieved {len(parent_chunks)} unique parent chunks.")
+                
+                # Filter out chunks with very low scores
+                scored_tuples = list(zip(hybrid_scores, parent_chunks, sources))
 
-            # Step 5: Rerank the parent chunks for precision if enabled
-            if config.ENABLE_RERANKING and self.reranker_model and parent_chunks and self.tokenizer:
-                logger.info(f"Reranking {len(parent_chunks)} chunks with model {config.RERANKER_MODEL}...")
+                # Apply minimum score threshold
+                filtered_tuples = [t for t in scored_tuples if t[0] >= config.MIN_CHUNK_SCORE]
+                removed_count = len(scored_tuples) - len(filtered_tuples)
+                
+                if removed_count > 0:
+                    logger.info(f"Filtered out {removed_count} chunks with scores below {config.MIN_CHUNK_SCORE}")
+                
+                if not filtered_tuples:
+                    logger.warning("No chunks remain after score filtering")
+                    return self._create_empty_result(state)
+
+            # Step 5: Pre-filter chunks for reranking based on hybrid scores
+            if config.ENABLE_RERANKING and self.reranker_model and filtered_tuples and self.tokenizer:
+                # Sort by hybrid scores and select top PRE_RERANKER_TOP_K chunks
+                filtered_tuples.sort(key=lambda x: x[0], reverse=True)
+                
+                # Limit to PRE_RERANKER_TOP_K for reranking
+                pre_rerank_tuples = filtered_tuples[:config.PRE_RERANKER_TOP_K]
+                pre_rerank_chunks = [t[1] for t in pre_rerank_tuples]
+                pre_rerank_sources = [t[2] for t in pre_rerank_tuples]
+                
+                logger.info(f"Pre-filtered to {len(pre_rerank_chunks)} chunks for reranking (from {len(parent_chunks)} total). Top hybrid scores: {[f'{t[0]:.3f}' for t in pre_rerank_tuples[:3]]}")
+                
+                logger.info(f"Reranking {len(pre_rerank_chunks)} chunks with model {config.RERANKER_MODEL}...")
                 
                 # Format pairs according to Qwen3-Reranker format
-                task_instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+                task_instruction = 'Given a question about academic research, determine if the passage directly addresses the question and contains relevant information to answer it'
                 formatted_pairs = [
                     self.format_instruction(task_instruction, query, chunk) 
-                    for chunk in parent_chunks
+                    for chunk in pre_rerank_chunks
                 ]
                 
                 try:
@@ -244,15 +268,27 @@ class CorpusRetrievalService:
                         batch_inputs = self.process_inputs(batch)
                         batch_scores = self.compute_logits(batch_inputs)
                         rerank_scores.extend(batch_scores)
+                        
+                        # Debug: Log actual reranker scores for this batch
+                        logger.info(f"Batch {i//batch_size + 1} reranker scores: {[f'{s:.4f}' for s in batch_scores]}")
                     
-                    logger.info(f"Successfully reranked {len(rerank_scores)} chunks in batches")
+                    logger.info(f"Successfully reranked {len(rerank_scores)} chunks. All reranker scores: {[f'{s:.4f}' for s in rerank_scores]}")
+                    
+                    # Verify reranker produced valid scores
+                    if not rerank_scores or all(s == 0.5 for s in rerank_scores):
+                        logger.warning("Reranker produced default/empty scores, falling back to hybrid scores")
+                        # Use hybrid scores instead of reranker scores
+                        rerank_scores = [t[0] for t in pre_rerank_tuples]  # Extract hybrid scores
+                        logger.info(f"Using hybrid scores instead: {[f'{s:.4f}' for s in rerank_scores]}")
                     
                 except Exception as e:
-                    logger.error(f"Reranking failed: {e}, using uniform scores")
-                    rerank_scores = [0.5] * len(parent_chunks)  # Default neutral scores
+                    logger.error(f"Reranking failed: {e}, using hybrid scores as fallback")
+                    # Use hybrid scores instead of default uniform scores
+                    rerank_scores = [t[0] for t in pre_rerank_tuples]  # Extract hybrid scores
+                    logger.info(f"Fallback hybrid scores: {[f'{s:.4f}' for s in rerank_scores]}")
                 
-                # Combine scores with original chunks and sources
-                scored_parent_pairs = list(zip(rerank_scores, parent_chunks, sources))
+                # Combine scores with pre-filtered chunks and sources
+                scored_parent_pairs = list(zip(rerank_scores, pre_rerank_chunks, pre_rerank_sources))
                 
                 # Sort by the new reranker score in descending order
                 scored_parent_pairs.sort(key=lambda x: x[0], reverse=True)
@@ -272,15 +308,17 @@ class CorpusRetrievalService:
                     final_sources.append(source_with_score)
                     
             else:
-                # No reranking - use all parent chunks up to the limit
-                final_context = parent_chunks[:config.RERANKER_TOP_K]
-                retrieval_scores = [1.0] * len(final_context)  # Default high scores
+                # No reranking - use top chunks based on hybrid scores up to the limit
+                # filtered_tuples is already sorted and filtered by minimum score
+                final_pairs = filtered_tuples[:config.RERANKER_TOP_K]
+                final_context = [pair[1] for pair in final_pairs]
+                retrieval_scores = [pair[0] for pair in final_pairs]  # Use actual hybrid scores
                 
-                # Add default scores to sources
+                # Add hybrid scores to sources
                 final_sources = []
-                for i, source in enumerate(sources[:config.RERANKER_TOP_K]):
+                for i, (score, chunk, source) in enumerate(final_pairs):
                     source_with_score = source.copy()
-                    source_with_score['score'] = 1.0  # Default high score when no reranking
+                    source_with_score['score'] = float(score)  # Add hybrid score
                     final_sources.append(source_with_score)
                 
             best_retrieval_score = max(retrieval_scores) if retrieval_scores else 0.0
@@ -316,7 +354,9 @@ class CorpusRetrievalService:
             response = await self.client.aio.models.generate_content(
                 model=self.hyde_model, 
                 contents=hyde_prompt,
-                generation_config={"thinking_config": {"thinking_budget": 0}},
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)  # Disable thinking for speed
+                )
             )
             hypothetical_doc = response.text.strip()
             expanded_query = f"{query} {hypothetical_doc}"
@@ -339,7 +379,7 @@ class CorpusRetrievalService:
                 contents=query,
                 config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY", output_dimensionality=768)
             )
-            embedding = response.embedding
+            embedding = response.embeddings[0].values
             embedding_cache.set(cache_key, embedding)
             return embedding
         except Exception as e:
@@ -347,10 +387,11 @@ class CorpusRetrievalService:
             return [0.0] * 768  # Return zero embedding as fallback
 
     @time_async_block("corpus_retrieval.parent_retrieval")
-    async def _get_parent_chunks(self, child_results: List[dict]) -> Tuple[List[str], List[dict]]:
-        """Get parent chunks from child search results."""
+    async def _get_parent_chunks(self, child_results: List[dict]) -> Tuple[List[str], List[dict], List[float]]:
+        """Get parent chunks from child search results, preserving hybrid scores."""
         parent_chunks = []
         sources = []
+        hybrid_scores = []
         seen_parent_ids = set()
         
         for result in child_results:
@@ -365,9 +406,11 @@ class CorpusRetrievalService:
                         'filename': result.get('filename', 'Unknown'),
                         'chunk_index': result.get('parent_index', 0)
                     })
+                    # Preserve the hybrid score from Weaviate
+                    hybrid_scores.append(result.get('score', 0.0))
                     seen_parent_ids.add(parent_id)
         
-        return parent_chunks, sources
+        return parent_chunks, sources, hybrid_scores
 
     def _create_empty_result(self, state: GraphState) -> GraphState:
         """Create an empty result state."""

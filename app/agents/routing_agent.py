@@ -96,8 +96,7 @@ Analyze this user query and classify it into ONE of these categories:
 - ALSO INCLUDES general topic questions that could be found in academic papers: "What are SQL challenges?", "What methods exist for text-to-SQL?", "How does neural machine translation work?"
 
 **search_web**: Query requires current/external information not in papers
-- Examples: "What did OpenAI release this month?", "Latest developments in LLMs", "Current state of AI research"
-- OR when user explicitly requests web search: "Search online for...", "Look up on the web..."
+- When user explicitly requests web search: "Search online for...", "Look up on the web..."
 
 **corpus_and_web_search**: Query explicitly asks to combine internal knowledge with web search results.
 - Examples: "Compare the findings in your documents with what's on the web about text-to-sql", "What are text-to-SQL challenges based on your internal knowledge and your search on internet?"
