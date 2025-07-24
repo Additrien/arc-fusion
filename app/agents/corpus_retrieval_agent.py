@@ -196,13 +196,20 @@ class CorpusRetrievalService:
         
         try:
             async with time_async_block("corpus_retrieval.execute_pipeline"):
-                # Step 1: Generate hypothetical document for query expansion (HyDE)
-                expanded_query = await self._generate_hypothetical_document(query)
+                # Step 1&2: Parallelize HyDE and base embedding generation
+                hyde_task = asyncio.create_task(self._generate_hypothetical_document(query))
+                base_embedding_task = asyncio.create_task(self._generate_query_embedding(query))
                 
-                # Step 2: Generate embedding for the expanded query
-                query_embedding = await self._generate_query_embedding(expanded_query)
+                # Wait for both to complete
+                expanded_query, base_embedding = await asyncio.gather(hyde_task, base_embedding_task)
                 
-                # Step 3: Perform hybrid search using Weaviate
+                # Step 3: Generate final embedding from expanded query (or use base if HyDE failed)
+                if expanded_query != query:  # HyDE succeeded
+                    query_embedding = await self._generate_query_embedding(expanded_query)
+                else:  # HyDE failed, use base embedding
+                    query_embedding = base_embedding
+                
+                # Step 4: Perform hybrid search using Weaviate
                 child_results = await self.vector_store.hybrid_search(query, query_embedding, limit=config.INITIAL_RETRIEVAL_K)
                 
                 if not child_results:
@@ -256,8 +263,8 @@ class CorpusRetrievalService:
                 ]
                 
                 try:
-                    # Process in small batches to avoid CUDA out of memory
-                    batch_size = 2 if self.device == "cuda" else 4  # Single items for GPU to avoid OOM
+                    # Optimize batch size for better throughput
+                    batch_size = 2 if self.device == "cuda" else 8  # More aggressive batching for better speed
                     rerank_scores = []
                     
                     for i in range(0, len(formatted_pairs), batch_size):

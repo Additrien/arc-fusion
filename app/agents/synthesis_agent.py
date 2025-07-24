@@ -14,6 +14,7 @@ from .registry import AgentRegistry
 from .state import GraphState
 from ..utils.logger import get_logger
 from ..utils.performance import time_async_function, time_async_block
+from .. import config
 
 logger = get_logger('arc_fusion.agents.synthesis')
 
@@ -25,8 +26,8 @@ class SynthesisService:
     """Service for generating final answers using retrieved context."""
     
     def __init__(self):
-        # Use Gemini 2.5 Flash for faster response synthesis (still high quality)
-        self.synthesis_model = 'gemini-2.5-flash'
+        # Use configured synthesis model
+        self.synthesis_model = config.SYNTHESIS_MODEL
         
         # Optimized generation configuration for speed
         self.generation_config = {

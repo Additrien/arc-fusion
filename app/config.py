@@ -13,7 +13,8 @@ import os
 PRIMARY_MODEL = "gemini-2.5-flash-lite"
 
 # The model for high-quality synthesis.
-SYNTHESIS_MODEL = "gemini-2.5-pro"
+# Using Flash for speed while maintaining good quality
+SYNTHESIS_MODEL = "gemini-2.5-flash"
 
 # The embedding model for retrieval. Using the latest generation model.
 EMBEDDING_MODEL = "gemini-embedding-001"
@@ -39,8 +40,8 @@ ENABLE_MODEL_QUANTIZATION = os.getenv("ENABLE_MODEL_QUANTIZATION", "true").lower
 DEVICE = os.getenv("DEVICE", "auto")
 
 # The number of initial candidates to retrieve from the vector store.
-# This larger set is then fed to the reranker.
-INITIAL_RETRIEVAL_K = 25
+# Reduced for speed - still good coverage with hybrid search
+INITIAL_RETRIEVAL_K = 20
 
 # The number of top-scoring chunks from hybrid search to send to the reranker.
 # This reduces GPU load by filtering out lower-quality chunks before reranking.
@@ -103,8 +104,8 @@ EMBEDDING_REQUEST_DELAY = 4.0  # 15 requests/minute = 1 request per 4 seconds
 # Maximum concurrent embedding requests
 MAX_CONCURRENT_EMBEDDINGS = 1  # Free tier is quite restrictive
 
-# Enable rate limiting protection
-ENABLE_RATE_LIMITING = True
+# Disable rate limiting for speed (use with caution on production)
+ENABLE_RATE_LIMITING = False
 
 
 # --- API Timeouts & Performance ---
