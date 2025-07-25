@@ -13,6 +13,7 @@ from app.core.dataset_generator_service import DatasetGeneratorService
 from app.core.vector_store import VectorStore
 from app.core.agent_service import agent_service
 from app.core.evaluation_service import evaluation_service
+from app.core.factories import get_document_processor, get_vector_store, get_agent_service, get_service_factory
 from app.utils.logger import init_logging_from_env, get_logger, set_request_id
 from app.utils.performance import get_performance_summary, clear_performance_metrics
 from app.utils.cache import embedding_cache, hyde_cache
@@ -38,9 +39,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize core services
-document_processor = DocumentProcessor()
-vector_store = VectorStore()
+# Initialize core services using factory functions
+factory = get_service_factory()
+document_processor = factory.create_document_processor()
+vector_store = factory.create_vector_store()
+agent_service = factory.create_agent_service()
 # Note: evaluation_service is imported directly from the module
 
 

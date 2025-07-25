@@ -12,6 +12,7 @@ import time
 
 from ..agents.framework import AgentFramework
 from ..agents.loader import load_all_agents  # This triggers agent registration
+from ..core.session.session_manager import SessionManager, ConversationEntry
 from ..utils.logger import get_logger
 from ..utils.performance import time_async_function, time_async_block, log_performance_summary
 
@@ -28,10 +29,11 @@ class AgentService:
     - Error handling and response formatting
     """
     
-    def __init__(self):
+    def __init__(self, session_manager: SessionManager = None):
         self.framework = AgentFramework()
-        self.sessions: Dict[str, Dict[str, Any]] = {}
+        self.session_manager = session_manager
         self._graph_built = False
+        self.sessions: Dict[str, Dict[str, Any]] = {}  # Fallback for when no session_manager is provided
         
         # Initialize the framework
         self._initialize_framework()
@@ -128,64 +130,129 @@ class AgentService:
         Returns:
             True if session was cleared, False if session didn't exist
         """
-        if session_id in self.sessions:
-            del self.sessions[session_id]
-            logger.info(f"Cleared memory for session {session_id}")
-            return True
+        # Use SessionManager if available, otherwise fallback to old method
+        if self.session_manager:
+            return self.session_manager.clear_session(session_id)
         else:
-            logger.warning(f"Attempted to clear non-existent session {session_id}")
-            return False
+            if session_id in self.sessions:
+                del self.sessions[session_id]
+                logger.info(f"Cleared memory for session {session_id}")
+                return True
+            else:
+                logger.warning(f"Attempted to clear non-existent session {session_id}")
+                return False
     
     def get_session_info(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get information about a session."""
-        session_data = self.sessions.get(session_id)
-        if session_data:
-            return {
-                "session_id": session_id,
-                "message_count": len(session_data.get("conversation_history", [])),
-                "created_at": session_data.get("created_at"),
-                "last_active": session_data.get("last_active")
-            }
-        return None
+        """
+        Get information about a session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Session information or None if session doesn't exist
+        """
+        # Use SessionManager if available, otherwise fallback to old method
+        if self.session_manager:
+            return self.session_manager.get_session_info(session_id)
+        else:
+            session_data = self.sessions.get(session_id)
+            if session_data:
+                return {
+                    "session_id": session_id,
+                    "message_count": len(session_data.get("conversation_history", [])),
+                    "created_at": session_data.get("created_at"),
+                    "last_active": session_data.get("last_active")
+                }
+            return None
     
     def get_agent_info(self) -> Dict[str, Any]:
         """Get information about registered agents and capabilities."""
         return self.framework.get_agent_info()
     
     def _get_session_data(self, session_id: str) -> Dict[str, Any]:
-        """Get or create session data."""
-        if session_id not in self.sessions:
-            self.sessions[session_id] = {
-                "conversation_history": [],
-                "created_at": time.time(),
-                "last_active": time.time()
-            }
+        """
+        Get or create session data.
         
-        return self.sessions[session_id]
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Session data dictionary
+        """
+        # Use SessionManager if available, otherwise fallback to old method
+        if self.session_manager:
+            session = self.session_manager.get_or_create_session(session_id)
+            # Convert to the format expected by the rest of the system
+            conversation_history = []
+            for entry in session.conversation_history:
+                conversation_history.append({
+                    "query": entry.query,
+                    "answer": entry.answer,
+                    "timestamp": entry.timestamp,
+                    "processing_time": entry.processing_time,
+                    "agent_path": entry.agent_path,
+                    "confidence": entry.confidence
+                })
+            
+            return {
+                "conversation_history": conversation_history,
+                "created_at": session.created_at,
+                "last_active": session.last_active
+            }
+        else:
+            if session_id not in self.sessions:
+                self.sessions[session_id] = {
+                    "conversation_history": [],
+                    "created_at": time.time(),
+                    "last_active": time.time()
+                }
+            
+            return self.sessions[session_id]
     
     def _update_session(self, session_id: str, final_state: Dict[str, Any], 
                        query: str, processing_time: float):
-        """Update session with new conversation data."""
-        if session_id not in self.sessions:
-            self.sessions[session_id] = {"conversation_history": []}
+        """
+        Update session with new conversation data.
         
-        # Add to conversation history
-        conversation_entry = {
-            "query": query,
-            "answer": final_state.get("final_answer", ""),
-            "timestamp": time.time(),
-            "processing_time": processing_time,
-            "agent_path": final_state.get("agent_path", []),
-            "confidence": final_state.get("answer_confidence", 0.0)
-        }
-        
-        self.sessions[session_id]["conversation_history"].append(conversation_entry)
-        self.sessions[session_id]["last_active"] = time.time()
-        
-        # Keep only last 10 conversations to prevent memory bloat
-        if len(self.sessions[session_id]["conversation_history"]) > 10:
-            self.sessions[session_id]["conversation_history"] = \
-                self.sessions[session_id]["conversation_history"][-10:]
+        Args:
+            session_id: Session identifier
+            final_state: Final state from agent processing
+            query: User query
+            processing_time: Time taken to process query
+        """
+        # Use SessionManager if available, otherwise fallback to old method
+        if self.session_manager:
+            entry = ConversationEntry(
+                query=query,
+                answer=final_state.get("final_answer", ""),
+                timestamp=time.time(),
+                processing_time=processing_time,
+                agent_path=final_state.get("agent_path", []),
+                confidence=final_state.get("answer_confidence", 0.0)
+            )
+            self.session_manager.add_conversation_entry(session_id, entry)
+        else:
+            if session_id not in self.sessions:
+                self.sessions[session_id] = {"conversation_history": []}
+            
+            # Add to conversation history
+            conversation_entry = {
+                "query": query,
+                "answer": final_state.get("final_answer", ""),
+                "timestamp": time.time(),
+                "processing_time": processing_time,
+                "agent_path": final_state.get("agent_path", []),
+                "confidence": final_state.get("answer_confidence", 0.0)
+            }
+            
+            self.sessions[session_id]["conversation_history"].append(conversation_entry)
+            self.sessions[session_id]["last_active"] = time.time()
+            
+            # Keep only last 10 conversations to prevent memory bloat
+            if len(self.sessions[session_id]["conversation_history"]) > 10:
+                self.sessions[session_id]["conversation_history"] = \
+                    self.sessions[session_id]["conversation_history"][-10:]
     
     def _format_response(self, final_state: Dict[str, Any], processing_time: float) -> Dict[str, Any]:
         """Format the final state into a clean API response."""
@@ -211,5 +278,6 @@ class AgentService:
         }
 
 
-# Global agent service instance
-agent_service = AgentService() 
+# Global agent service instance (for backward compatibility)
+# This will be overridden when using the factory pattern
+agent_service = AgentService()

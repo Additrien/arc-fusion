@@ -2,11 +2,11 @@
 
 ## 🎯 **Overview**
 
-This document outlines practical improvements to enhance the modularity of the Arc-Fusion multi-agent RAG system. These improvements focus on **separation of concerns**, **dependency injection**, and **testability** without over-engineering.
+This document outlines the practical improvements made to enhance the modularity of the Arc-Fusion multi-agent RAG system. These improvements focus on **separation of concerns**, **dependency injection**, and **testability** without over-engineering.
 
 ---
 
-## 🔴 **Current Modularity Issues**
+## 🔴 **Previous Modularity Issues**
 
 ### 1. **Configuration Scatter**
 - Configuration imports scattered across multiple files
@@ -25,7 +25,7 @@ agent_service = AgentService()  # Global singleton
 - `AgentService`: Framework management + session storage + response formatting
 
 ### 4. **Tight Coupling**
-- Services directly instantiate their dependencies
+- Services directly instantiated their dependencies
 - Hard to mock for testing
 - Difficult to swap implementations
 
@@ -36,11 +36,11 @@ agent_service = AgentService()  # Global singleton
 
 ---
 
-## ✅ **Proposed Improvements**
+## ✅ **Implemented Improvements**
 
 ### 1. **Service-Level Configuration Classes**
 
-**Create typed configuration classes for each service:**
+**Created typed configuration classes for each service:**
 
 ```python
 # app/core/config/services.py
@@ -75,7 +75,7 @@ class VectorStoreConfig(BaseSettings):
 
 ### 2. **Dependency Injection via Constructor**
 
-**Refactor services to receive dependencies via constructor:**
+**Refactored services to receive dependencies via constructor:**
 
 ```python
 # Before
@@ -86,8 +86,11 @@ class DocumentProcessor:
 
 # After  
 class DocumentProcessor:
-    def __init__(self, config: DocumentProcessingConfig, embedding_service: EmbeddingService):
-        self.config = config
+    def __init__(self, pdf_extractor: PDFExtractor, 
+                 chunking_service: ChunkingService,
+                 embedding_service: EmbeddingService):
+        self.pdf_extractor = pdf_extractor
+        self.chunking_service = chunking_service
         self.embedding_service = embedding_service
 ```
 
@@ -114,7 +117,7 @@ class DocumentProcessor:
                  chunking_service: ChunkingService,
                  embedding_service: EmbeddingService):
         self.pdf_extractor = pdf_extractor
-        self.chunking_service = chunking_service  
+        self.chunking_service = chunking_service
         self.embedding_service = embedding_service
 ```
 
@@ -272,21 +275,21 @@ class ServiceFactory:
 ## 🚀 **Implementation Priority**
 
 ### **Phase 1: Configuration & Dependency Injection** 
-1. Create service-specific configuration classes
-2. Refactor `DocumentProcessor` to use constructor injection
-3. Create `ServiceFactory` for dependency management
-4. Update FastAPI endpoints to use factory
+1. ✅ Create service-specific configuration classes
+2. ✅ Refactor `DocumentProcessor` to use constructor injection
+3. ✅ Create `ServiceFactory` for dependency management
+4. ✅ Update FastAPI endpoints to use factory
 
 ### **Phase 2: Responsibility Separation**
-1. Extract `PDFExtractor` from `DocumentProcessor`
-2. Extract `ChunkingService` from `DocumentProcessor` 
-3. Extract `EmbeddingService` with rate limiting
-4. Create `SessionManager` to handle session logic
+1. ✅ Extract `PDFExtractor` from `DocumentProcessor`
+2. ✅ Extract `ChunkingService` from `DocumentProcessor` 
+3. ✅ Extract `EmbeddingService` with rate limiting
+4. ✅ Create `SessionManager` to handle session logic
 
 ### **Phase 3: Interface Abstraction**
-1. Create interfaces for extensibility
-2. Implement alternative stores (file-based for testing)
-3. Add proper error handling and validation
+1. ✅ Create interfaces for extensibility
+2. ✅ Implement alternative stores (file-based for testing)
+3. ✅ Add proper error handling and validation
 
 ---
 
@@ -322,8 +325,6 @@ def test_document_processing():
 - **Configuration**: Centralized, typed, and validated
 - **Scalability**: Easy to add new features/providers
 - **Development**: Faster iteration with proper abstractions
-
----
 
 ---
 
@@ -616,4 +617,4 @@ class RoutingAgent:
 
 ## 📝 **Note on Scope**
 
-These improvements maintain the **pragmatic** approach suitable for this assessment while significantly improving code quality and maintainability. They avoid over-engineering with complex frameworks while providing solid foundations for future growth. 
+These improvements maintain the **pragmatic** approach suitable for this assessment while significantly improving code quality and maintainability. They avoid over-engineering with complex frameworks while providing solid foundations for future growth.

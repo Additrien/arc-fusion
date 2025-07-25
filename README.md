@@ -532,6 +532,37 @@ This implementation demonstrates **senior-level engineering**:
 
 The **extensible agent framework** is the key innovation - it transforms adding sophisticated AI capabilities from a multi-day refactoring effort into a **single file drop-in**. With the addition of the PlannerAgent, the system now demonstrates cutting-edge agent orchestration patterns that move beyond static graphs to dynamic, model-driven execution plans.
 
+## 📦 Modular Architecture Improvements
+
+This system has been enhanced with a robust modular architecture that follows industry best practices:
+
+### **Dependency Injection & Inversion of Control**
+- Services are created through a centralized factory pattern
+- Dependencies are injected via constructors rather than hardcoded
+- Easy to swap implementations without changing core logic
+
+### **Single Responsibility Principle**
+- Document processing responsibilities split into specialized services:
+  - `PDFExtractor`: Handles PDF text extraction
+  - `ChunkingService`: Manages text chunking strategies
+  - `EmbeddingService`: Handles embedding generation with retry logic
+- Session management extracted to `SessionManager`
+
+### **Configuration Management**
+- Typed configuration classes with environment variable support
+- Centralized configuration validation
+- Easy to extend with new configuration options
+
+### **Testability**
+- Services can be easily mocked for unit testing
+- Clear interfaces between components
+- Reduced coupling between modules
+
+### **Extensibility**
+- New providers can be added through simple interface implementation
+- Auto-discovery of new components
+- Plugin-like architecture for LLM providers
+
 ## 📄 License
 
 MIT License - See LICENSE file for details.

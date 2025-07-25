@@ -1,35 +1,54 @@
-import io
-import uuid
-import asyncio
-import time
-from typing import Dict, List, Any, Optional
-from PyPDF2 import PdfReader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+"""
+Handles PDF processing with parent-child chunking strategy.
+"""
 import os
+import uuid
+from typing import Dict, List, Any, Optional
+import io
+
+from PyPDF2 import PdfReader
 from google import genai
 from google.genai import types
+import asyncio
+import time
 
+from app.core.document.pdf_extractor import PDFExtractor
+from app.core.document.chunking_service import ChunkingService, ChunkingResult
+from app.core.embeddings.embedding_service import EmbeddingService
+from app.core.vector_store import VectorStore
+from app.core.config.services import DocumentProcessingConfig
 from app.utils.logger import get_logger
 
 logger = get_logger('arc_fusion.document_processor')
 
+
 class DocumentProcessor:
     """Handles PDF processing with parent-child chunking strategy."""
     
-    def __init__(self):
-        # Use config values for chunk sizes
-        from app.config import PARENT_CHUNK_SIZE, PARENT_CHUNK_OVERLAP, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP
-        self.parent_chunk_size = PARENT_CHUNK_SIZE
-        self.parent_overlap = PARENT_CHUNK_OVERLAP
-        self.child_chunk_size = CHILD_CHUNK_SIZE
-        self.child_overlap = CHILD_CHUNK_OVERLAP
+    def __init__(self, 
+                 pdf_extractor: PDFExtractor,
+                 chunking_service: ChunkingService,
+                 embedding_service: EmbeddingService,
+                 vector_store: VectorStore,
+                 config: DocumentProcessingConfig):
+        """
+        Initialize the document processor with injected dependencies.
         
-        # Parent chunk store (in-memory for rapid context retrieval)
-        self.parent_store: Dict[str, str] = {}
+        Args:
+            pdf_extractor: Service for extracting text from PDFs
+            chunking_service: Service for chunking text content
+            embedding_service: Service for generating embeddings
+            vector_store: Service for storing chunks in vector database
+            config: Document processing configuration
+        """
+        self.pdf_extractor = pdf_extractor
+        self.chunking_service = chunking_service
+        self.embedding_service = embedding_service
+        self.vector_store = vector_store
+        self.config = config
         
-        # Initialize Gemini client for embeddings
+        # Initialize Gemini client for embeddings (needed for query embeddings)
         self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-        # Use the same embedding model as defined in config for consistency
         from app.config import EMBEDDING_MODEL
         self.embedding_model = EMBEDDING_MODEL
         
@@ -39,20 +58,8 @@ class DocumentProcessor:
         self.request_delay = EMBEDDING_REQUEST_DELAY
         self.last_request_time = 0
         
-        # Text splitters
-        self.parent_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.parent_chunk_size,
-            chunk_overlap=self.parent_overlap,
-            length_function=len,
-            separators=["\n\n", "\n", " ", ""]
-        )
-        
-        self.child_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.child_chunk_size,
-            chunk_overlap=self.child_overlap,
-            length_function=len,
-            separators=["\n\n", "\n", " ", ""]
-        )
+        # Parent chunk store (in-memory for rapid context retrieval)
+        self.parent_store: Dict[str, str] = {}
     
     async def process_document(self, content: bytes, filename: str) -> Dict[str, Any]:
         """Process PDF document with parent-child chunking strategy."""
@@ -63,113 +70,57 @@ class DocumentProcessor:
             "file_size": len(content)
         })
         
-        # Extract text from PDF
-        text = self._extract_text_from_pdf(content)
+        # Extract text from PDF using the PDFExtractor service
+        text = self.pdf_extractor.extract_text(content)
         logger.info("PDF text extracted", extra={
             "text_length": len(text),
             "document_id": document_id
         })
         
-        # Create parent chunks
-        parent_chunks = self.parent_splitter.split_text(text)
-        logger.info("Parent chunks created", extra={
-            "parent_chunk_count": len(parent_chunks),
+        # Create chunks using the ChunkingService
+        chunking_result = self.chunking_service.create_chunks(text, document_id, filename)
+        logger.info("Chunks created", extra={
+            "parent_chunk_count": len(chunking_result.parent_chunks),
+            "child_chunk_count": len(chunking_result.child_chunks),
             "document_id": document_id
         })
         
-        # Process each parent chunk
-        child_chunks_data = []
-        total_child_chunks = 0
+        # Generate embeddings for child chunks using the EmbeddingService
+        child_texts = [chunk["content"] for chunk in chunking_result.child_chunks]
+        embeddings = await self.embedding_service.generate_embeddings(child_texts)
         
-        for parent_idx, parent_chunk in enumerate(parent_chunks):
-            parent_id = str(uuid.uuid4())
+        # Add embeddings to child chunks
+        child_chunks_data = []
+        for i, chunk in enumerate(chunking_result.child_chunks):
+            chunk_with_embedding = chunk.copy()
+            chunk_with_embedding["embedding"] = embeddings[i]
+            child_chunks_data.append(chunk_with_embedding)
             
             # Store parent chunk in memory
-            self.parent_store[parent_id] = parent_chunk
-            
-            # Create child chunks from parent
-            child_chunks = self.child_splitter.split_text(parent_chunk)
-            total_child_chunks += len(child_chunks)
-            
-            logger.info("Processing parent chunk", extra={
-                "parent_index": parent_idx,
-                "child_chunks_count": len(child_chunks),
-                "parent_chunk_length": len(parent_chunk),
-                "document_id": document_id
-            })
-            
-            for child_idx, child_chunk in enumerate(child_chunks):
-                child_id = str(uuid.uuid4())
-                
-                logger.debug("Generating embedding for child chunk", extra={
-                    "parent_index": parent_idx,
-                    "child_index": child_idx,
-                    "chunk_length": len(child_chunk),
-                    "document_id": document_id
-                })
-                
-                # Generate embedding for child chunk
-                embedding = await self._generate_embedding_with_retry(child_chunk)
-                
-                child_chunks_data.append({
-                    "id": child_id,
-                    "parent_id": parent_id,
-                    "content": child_chunk,
-                    "embedding": embedding,
-                    "document_id": document_id,
-                    "filename": filename,
-                    "parent_index": parent_idx,
-                    "child_index": child_idx
-                })
+            parent_id = chunk["parent_id"]
+            if parent_id not in self.parent_store:
+                # Find the parent chunk
+                for parent_chunk in chunking_result.parent_chunks:
+                    if parent_chunk["id"] == parent_id:
+                        self.parent_store[parent_id] = parent_chunk["content"]
+                        break
         
         logger.info("Document processing completed", extra={
             "document_id": document_id,
             "document_filename": filename,
-            "parent_chunks": len(parent_chunks),
+            "parent_chunks": len(chunking_result.parent_chunks),
             "child_chunks": len(child_chunks_data),
             "total_embedding_calls": len(child_chunks_data)
         })
         
-        # Collect parent chunks data for storage
-        parent_chunks_data = []
-        for parent_idx, parent_chunk in enumerate(parent_chunks):
-            # Find the parent_id for this parent chunk by looking at the first child chunk
-            parent_id = None
-            for child_data in child_chunks_data:
-                if child_data["parent_index"] == parent_idx:
-                    parent_id = child_data["parent_id"]
-                    break
-            
-            if parent_id:
-                parent_chunks_data.append({
-                    "id": parent_id,
-                    "content": parent_chunk,
-                    "document_id": document_id,
-                    "filename": filename,
-                    "parent_index": parent_idx
-                })
-        
         return {
             "document_id": document_id,
             "filename": filename,
-            "parent_chunk_count": len(parent_chunks),
+            "parent_chunk_count": len(chunking_result.parent_chunks),
             "child_chunk_count": len(child_chunks_data),
             "child_chunks": child_chunks_data,
-            "parent_chunks": parent_chunks_data  # Add parent chunks data
+            "parent_chunks": chunking_result.parent_chunks
         }
-    
-    def _extract_text_from_pdf(self, content: bytes) -> str:
-        """Extract text content from PDF bytes."""
-        pdf_file = io.BytesIO(content)
-        pdf_reader = PdfReader(pdf_file)
-        
-        text = ""
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-        
-        return text.strip()
     
     async def _generate_embedding_with_retry(self, text: str) -> List[float]:
         """Generate embedding with retry logic and rate limiting."""
@@ -259,4 +210,4 @@ class DocumentProcessor:
     
     async def clear_parent_store(self):
         """Clear all parent chunks from memory."""
-        self.parent_store.clear() 
+        self.parent_store.clear()
