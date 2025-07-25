@@ -22,7 +22,11 @@ services:
       start_period: 90s
 
   app:
-    build: .
+    build: 
+      context: .
+      args:
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
     ports:
       - "8000:8000"
     environment:
@@ -41,6 +45,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./logs:/app/logs:rw
+      - ./data:/app/data:rw
     healthcheck:
       test: curl -f http://localhost:8000/health || exit 1
       interval: 30s

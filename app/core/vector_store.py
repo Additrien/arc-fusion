@@ -418,7 +418,36 @@ class VectorStore:
             }
         
         return await asyncio.get_event_loop().run_in_executor(self.executor, _get_stats_sync)
-    
+
+    @time_async_function("vector_store.get_all_parent_chunks")
+    async def get_all_parent_chunks(self) -> List[str]:
+        """Retrieve the content of all parent chunks from Weaviate."""
+        await self._ensure_connected()
+        
+        from app.utils.logger import get_logger
+        logger = get_logger('arc_fusion.vector_store')
+
+        def _fetch_all_sync():
+            try:
+                parent_collection = self.client.collections.get(self.parent_collection_name)
+                
+                # Fetch all objects. For very large databases, you might need pagination.
+                # For this project's scale, a high limit is sufficient.
+                response = parent_collection.query.fetch_objects(limit=10000)
+                
+                if response and hasattr(response, 'objects'):
+                    logger.info(f"Fetched {len(response.objects)} parent chunks from the database.")
+                    return [obj.properties.get("content") for obj in response.objects if obj.properties]
+                
+                logger.warning("No parent chunks found in the database.")
+                return []
+                
+            except Exception as e:
+                logger.error(f"Failed to fetch all parent chunks: {str(e)}")
+                return []
+        
+        return await asyncio.get_event_loop().run_in_executor(self.executor, _fetch_all_sync)
+
     async def clear_all_documents(self):
         """Clear all documents from the database with robust error handling."""
         await self._ensure_connected()

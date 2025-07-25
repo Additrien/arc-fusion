@@ -14,7 +14,13 @@ PRIMARY_MODEL = "gemini-2.5-flash-lite"
 
 # The model for high-quality synthesis.
 # Using Flash for speed while maintaining good quality
-SYNTHESIS_MODEL = "gemini-2.5-flash"
+SYNTHESIS_MODEL = "models/gemini-2.5-flash"
+
+# Evaluation model for RAG quality assessment
+EVALUATION_MODEL = "models/gemini-2.5-flash"
+
+# Dataset generation model
+DATASET_GENERATION_MODEL = "models/gemini-2.5-flash"
 
 # The embedding model for retrieval. Using the latest generation model.
 EMBEDDING_MODEL = "gemini-embedding-001"

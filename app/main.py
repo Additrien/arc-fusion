@@ -1,14 +1,18 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, status
+from fastapi import FastAPI, HTTPException, UploadFile, File, status, BackgroundTasks, Query, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import os
+import json
 from dotenv import load_dotenv
+import time
 
 from app.core.document_processor import DocumentProcessor
+from app.core.dataset_generator_service import DatasetGeneratorService
 from app.core.vector_store import VectorStore
 from app.core.agent_service import agent_service
+from app.core.evaluation_service import evaluation_service
 from app.utils.logger import init_logging_from_env, get_logger, set_request_id
 from app.utils.performance import get_performance_summary, clear_performance_metrics
 from app.utils.cache import embedding_cache, hyde_cache
@@ -37,6 +41,8 @@ app.add_middleware(
 # Initialize core services
 document_processor = DocumentProcessor()
 vector_store = VectorStore()
+# Note: evaluation_service is imported directly from the module
+
 
 # Pydantic models for request/response validation
 class AskRequest(BaseModel):
@@ -56,10 +62,31 @@ class AskResponse(BaseModel):
     confidence: float
     metadata: Dict[str, Any]
 
+class EvaluationResponse(BaseModel):
+    scores: Dict[str, float]
+    details: List[Dict[str, Any]]
+
+class GoldenDatasetResponse(BaseModel):
+    dataset: List[Dict[str, str]]
+    total_pairs: int
+    file_path: str
+    created_at: Optional[str] = None
+
+class GoldenDatasetStatsResponse(BaseModel):
+    total_pairs: int
+    file_path: str
+    file_size_bytes: int
+    created_at: Optional[str] = None
+    sample_questions: List[str] = []
+
+
+# Create a separate router for the API versions
+api_router = APIRouter(prefix="/api/v1")
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint for monitoring and load balancing."""
-    return {"status": "healthy", "service": "arc-fusion-rag"}
+    return {"status": "ok", "timestamp": time.time()}
 
 @app.get("/api/v1/performance")
 async def get_performance_metrics():
@@ -374,6 +401,185 @@ async def get_session_info(session_id: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve session info: {str(e)}"
         )
+
+
+async def generate_dataset_task(total_pairs: int):
+    """Background task for generating the golden dataset from Weaviate."""
+    logger.info(f"Background dataset generation started, targeting {total_pairs} pairs.")
+    output_file = "data/golden_dataset.jsonl"  # Changed to data directory
+
+    vector_store = VectorStore()
+    generator_service = DatasetGeneratorService()
+
+    try:
+        parent_chunks = await vector_store.get_all_parent_chunks()
+        if not parent_chunks:
+            logger.error("Background task: No parent chunks found in Weaviate.")
+            return
+
+        qa_pairs = await generator_service.generate_from_chunks(parent_chunks, total_pairs)
+        
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        with open(output_file, "w") as f:
+            for pair in qa_pairs:
+                f.write(json.dumps(pair) + "\n")
+        
+        logger.info(f"Background task completed. Saved {len(qa_pairs)} Q&A pairs to {output_file}")
+    except Exception as e:
+        logger.error(f"Background dataset generation task failed: {e}")
+
+# The endpoint in main.py gets a new optional parameter
+@app.post("/api/v1/evaluation/generate-dataset", status_code=status.HTTP_202_ACCEPTED)
+async def generate_golden_dataset(
+    background_tasks: BackgroundTasks,
+    total_pairs: int = Query(50, description="The total number of Q&A pairs to generate.")
+):
+    """
+    Trigger the generation of the golden Q&A dataset from Weaviate chunks in the background.
+    """
+    request_id = set_request_id()
+    logger.info("Golden dataset generation triggered via API from Weaviate.", extra={"request_id": request_id})
+    
+    background_tasks.add_task(generate_dataset_task, total_pairs=total_pairs)
+    
+    return {
+        "message": "Golden dataset generation from Weaviate chunks has been started in the background.",
+        "output_file": "data/golden_dataset.jsonl",  # Updated path
+        "target_pairs": total_pairs
+    }
+
+@app.get("/api/v1/evaluation/golden-dataset", response_model=GoldenDatasetResponse)
+async def get_golden_dataset():
+    """
+    Retrieve the generated golden dataset.
+    
+    Returns the Q&A pairs from the golden dataset file with metadata.
+    """
+    request_id = set_request_id()
+    golden_dataset_path = "data/golden_dataset.jsonl"
+    
+    logger.info("Golden dataset retrieval requested", extra={"request_id": request_id})
+    
+    try:
+        if not os.path.exists(golden_dataset_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Golden dataset not found. Please generate it first using POST /api/v1/evaluation/generate-dataset"
+            )
+        
+        # Read the JSONL file
+        dataset = []
+        with open(golden_dataset_path, "r", encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if line:
+                    try:
+                        qa_pair = json.loads(line)
+                        dataset.append(qa_pair)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Skipping malformed line {line_num} in golden dataset: {e}")
+        
+        # Get file creation time
+        file_stats = os.stat(golden_dataset_path)
+        created_at = str(file_stats.st_mtime)
+        
+        logger.info(f"Successfully retrieved {len(dataset)} Q&A pairs from golden dataset", 
+                   extra={"request_id": request_id, "total_pairs": len(dataset)})
+        
+        return GoldenDatasetResponse(
+            dataset=dataset,
+            total_pairs=len(dataset),
+            file_path=golden_dataset_path,
+            created_at=created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to retrieve golden dataset", extra={
+            "error": str(e), "error_type": type(e).__name__, "request_id": request_id
+        })
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve golden dataset: {str(e)}"
+        )
+
+@app.get("/api/v1/evaluation/golden-dataset/stats", response_model=GoldenDatasetStatsResponse)
+async def get_golden_dataset_stats():
+    """
+    Retrieve metadata about the golden dataset without loading the full dataset.
+    """
+    request_id = set_request_id()
+    golden_dataset_path = "data/golden_dataset.jsonl"
+    
+    logger.info("Golden dataset stats retrieval requested", extra={"request_id": request_id})
+    
+    try:
+        if not os.path.exists(golden_dataset_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Golden dataset not found. Please generate it first using POST /api/v1/evaluation/generate-dataset"
+            )
+        
+        # Get file creation time
+        file_stats = os.stat(golden_dataset_path)
+        created_at = str(file_stats.st_mtime)
+        
+        # Attempt to load a few questions for a sample
+        sample_questions = []
+        total_pairs = 0
+        try:
+            with open(golden_dataset_path, "r", encoding="utf-8") as f:
+                for i, line in enumerate(f):
+                    line = line.strip()
+                    if line:
+                        try:
+                            qa_pair = json.loads(line)
+                            total_pairs += 1
+                            if len(sample_questions) < 5:  # Take first 5 questions as a sample
+                                sample_questions.append(qa_pair.get("question", "N/A"))
+                        except json.JSONDecodeError:
+                            pass # Skip malformed lines
+        except Exception as e:
+            logger.warning(f"Failed to load sample questions from golden dataset: {e}", extra={"request_id": request_id})
+ 
+        logger.info(f"Successfully retrieved golden dataset stats", 
+                   extra={"request_id": request_id, "total_pairs": total_pairs, "file_size_bytes": file_stats.st_size})
+         
+        return GoldenDatasetStatsResponse(
+            total_pairs=total_pairs,
+            file_path=golden_dataset_path,
+            file_size_bytes=file_stats.st_size,
+            created_at=created_at,
+            sample_questions=sample_questions
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to retrieve golden dataset stats", extra={
+            "error": str(e), "error_type": type(e).__name__, "request_id": request_id
+        })
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve golden dataset stats: {str(e)}"
+        )
+
+
+@app.post("/api/v1/evaluation/run")
+async def run_evaluation():
+    """
+    Run a full evaluation of the RAG system using the golden dataset.
+    This is a long-running process.
+    """
+    logger.info("Starting RAG evaluation")
+    try:
+        results = await evaluation_service.run_evaluation()
+        return results
+    except Exception as e:
+        logger.error(f"Error during evaluation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

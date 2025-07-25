@@ -1,59 +1,63 @@
-# Core API Framework
-fastapi==0.116.1
-uvicorn[standard]==0.35.0
+# Core web framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6
 
-# --- LLM & Agent Orchestration ---
-langchain==0.3.26
-langchain-core==0.3.70
-langchain-text-splitters==0.3.8
-langgraph==0.5.4
-langchain-google-genai==2.1.8
+# Environment and configuration
+python-dotenv>=1.0.0
+pydantic>=2.0.0
 
-# --- Local AI Models & Reranking ---
-# Explicitly declared for the reranker agent and hardware management
-torch
-transformers>=4.51.0  # Required for Qwen3 support
-accelerate  # For memory-efficient model loading and quantization
-bitsandbytes  # For 8-bit and 4-bit quantization
+# API client libraries
+aiohttp>=3.8.5
+httpx>=0.24.1
 
-# --- Vector Database & Embeddings ---
-weaviate-client==4.16.3
-# Google Gemini API - EMBEDDINGS
-google-genai>=1.26.0
+# Document processing
+PyPDF2>=3.0.1
+tiktoken>=0.5.1
+pypdf>=3.15.1
 
-# --- Document Processing ---
-PyPDF2==3.0.1
-python-multipart==0.0.20
+# Data handling
+pandas>=2.0.3
+numpy>=1.24.3
 
-# --- Configuration ---
-python-dotenv==1.1.1
-pydantic==2.11.7
+# Vector database client
+weaviate-client>=4.7.1
 
-# --- Data Processing ---
-pandas>=2.0.0
-numpy>=2.0.0
+# Vector embeddings and similarity
+sentence-transformers>=2.2.2
+faiss-cpu>=1.7.4
 
-# --- Core utilities ---
-typing-extensions
-certifi
-urllib3
+# Language models and AI
+google-genai>=1.27.0  # Modern Google AI library
+langchain>=0.2.16
+langchain-google-genai>=2.1.8
+openai>=1.48.0
 
-# --- System monitoring ---
-psutil
+# Text processing and NLP
+transformers>=4.30.0
+torch>=2.0.0
+spacy>=3.6.1
 
-# --- Evaluation & Observability ---
-ragas==0.1.19
-langfuse==3.2.1
+# Async and concurrency
+asyncio>=3.4.3
 
-# --- Web Search ---
-tavily-python==0.7.10
+# Utilities
+tqdm>=4.65.0
+tenacity>=8.2.2
 
-# --- HTTP Client ---
-httpx==0.28.1
+# Logging and monitoring
+colorama>=0.4.6
 
-# --- Testing ---
-pytest==8.2.0
-pytest-asyncio==0.24.0
-pytest-mock==3.12.0
-pytest-cov==4.1.0
-reportlab==4.0.9  # For generating test PDFs
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.1
+
+# Storage and caching
+diskcache>=5.6.3
+
+# --- State management and workflow orchestration ---
+langgraph>=0.2.45  # For agent orchestration and state management
+
+# --- Evaluation & RAG Testing ---
+datasets>=3.3.0  # For handling golden datasets
+ragas>=0.2.0  # Advanced RAG evaluation framework
