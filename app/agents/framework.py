@@ -82,6 +82,7 @@ class AgentFramework:
         retrieval_agent = self._get_agent_for_capability("document_search")
         web_agent = self._get_agent_for_capability("web_search")
         synthesis_agent = self._get_agent_for_capability("response_synthesis")
+        clarification_agent = self._get_agent_for_capability("query_clarification")
 
         # 1. The routing agent goes to the orchestrator to initialize the task list.
         graph.add_edge('routing', 'orchestrator')
@@ -95,6 +96,7 @@ class AgentFramework:
                 **({retrieval_agent: retrieval_agent} if retrieval_agent else {}),
                 **({web_agent: web_agent} if web_agent else {}),
                 **({synthesis_agent: synthesis_agent} if synthesis_agent else {}),
+                **({clarification_agent: clarification_agent} if clarification_agent else {}),
                 END: END
             }
         )
@@ -108,6 +110,10 @@ class AgentFramework:
         # 4. The synthesis agent is the final step before ending.
         if synthesis_agent:
             graph.add_edge(synthesis_agent, END)
+        
+        # 5. The clarification agent goes directly to END (no synthesis needed)
+        if clarification_agent:
+            graph.add_edge(clarification_agent, END)
 
     def orchestrator_node(self, state: GraphState) -> Dict[str, Any]:
         """
@@ -127,6 +133,8 @@ class AgentFramework:
                 tasks = ['web_search']
             elif intent == 'corpus_and_web_search':
                 tasks = ['corpus_retrieval', 'web_search']
+            elif intent == 'clarify':
+                tasks = ['clarification']
             
             logger.info(f"Orchestrator initialized tasks for intent '{intent}': {tasks}")
             return {

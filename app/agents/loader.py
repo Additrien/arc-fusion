@@ -24,6 +24,7 @@ def load_all_agents():
         from . import corpus_retrieval_agent
         from . import web_search_agent
         from . import synthesis_agent
+        from . import clarification_agent
         
         # Log successful registration
         from .registry import AgentRegistry

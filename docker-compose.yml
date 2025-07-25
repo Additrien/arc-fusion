@@ -32,6 +32,7 @@ services:
       - ENABLE_FILE_LOGGING=false
       - DEVICE=cpu  # Force CPU mode for local models
       - ENABLE_MODEL_QUANTIZATION=true  # Enable FP16 precision and memory optimizations
+      - ENABLE_RERANKING=false  # Disable slow reranking for faster responses
     env_file:
       - .env
     depends_on:

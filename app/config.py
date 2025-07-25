@@ -22,7 +22,8 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 
 # --- Reranking & Context Selection ---
 # Enables the two-stage retrieval process with a Cross-Encoder reranker.
-ENABLE_RERANKING = True
+# Can be disabled via ENABLE_RERANKING=false environment variable for faster responses
+ENABLE_RERANKING = os.getenv("ENABLE_RERANKING", "true").lower() == "true"
 
 # The Cross-Encoder model to use for reranking.
 # See: https://huggingface.co/Qwen/Qwen3-Reranker-0.6B
