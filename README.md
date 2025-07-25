@@ -19,6 +19,7 @@ A state-of-the-art multi-agent Retrieval-Augmented Generation system built with 
 
 ### **Intelligent Multi-Agent Orchestration**
 - **Intent Classification**: Fast routing using Gemini 1.5 Flash
+- **LLM-Based Planning**: Dynamic agent execution planning using Gemini 2.5 Flash Lite
 - **Corpus Retrieval**: Advanced RAG with academic paper understanding
 - **Automatic Fallback**: When no corpus results found → auto-route to web search
 - **Web Search**: Current information via Tavily API (explicit requests OR automatic fallback)
@@ -62,28 +63,35 @@ graph TD
     A["User Query"] --> B["Routing Agent<br/>(Gemini 1.5 Flash)"]
     B --> C{"Intent Classification"}
     
-    C -->|"retrieve_corpus"| D["Corpus Retrieval Agent"]
-    C -->|"search_web"| E["Web Search Agent"]
+    C -->|"Any Intent"| P["Planner Agent<br/>(Gemini 2.5 Flash Lite)"]
+    P --> D{"Dynamic Plan"}
     
-    D --> D1["1. HyDE Query Expansion<br/>(Gemini Flash)"]
-    D1 --> D2["2. Hybrid Search<br/>(Weaviate: Vector + BM25)"]
-    D2 --> D3["3. LLM as a Judge<br/>(Gemini 1.5 Flash)"]
-    D3 --> D4{"Quality Assessment<br/>Best Score ≥ 7.0?"}
+    D -->|"corpus_retrieval"| E["Corpus Retrieval Agent"]
+    D -->|"web_search"| F["Web Search Agent"]
+    D -->|"clarification"| G["Clarification Agent"]
     
-    D4 -->|"High Quality"| F["Synthesis Agent<br/>(Gemini 1.5 Pro)"]
-    D4 -->|"Low Quality"| E
+    E --> E1["1. HyDE Query Expansion<br/>(Gemini Flash)"]
+    E1 --> E2["2. Hybrid Search<br/>(Weaviate: Vector + BM25)"]
+    E2 --> E3["3. LLM as a Judge<br/>(Gemini 1.5 Flash)"]
+    E3 --> E4{"Quality Assessment<br/>Best Score ≥ 7.0?"}
     
-    E --> E1["Query Optimization<br/>(Gemini Flash)"]
-    E1 --> E2["Tavily API Search"]
-    E2 --> F
+    E4 -->|"High Quality"| H["Synthesis Agent<br/>(Gemini 1.5 Pro)"]
+    E4 -->|"Low Quality"| F
     
-    F --> G["Final Answer<br/>with Citations"]
+    F --> F1["Query Optimization<br/>(Gemini Flash)"]
+    F1 --> F2["Tavily API Search"]
+    F2 --> H
     
-    style D fill:#e1f5fe
-    style D3 fill:#f3e5f5
-    style D4 fill:#fff3e0
-    style E fill:#e8f5e8
-    style F fill:#fce4ec
+    G --> I["Clarification Response"]
+    
+    H --> J["Final Answer<br/>with Citations"]
+    
+    style E fill:#e1f5fe
+    style E3 fill:#f3e5f5
+    style E4 fill:#fff3e0
+    style F fill:#e8f5e8
+    style H fill:#fce4ec
+    style P fill:#fff8e1
 ```
 
 ### **Agent Capabilities Matrix**
@@ -91,6 +99,7 @@ graph TD
 | Agent | Capabilities | LLM Used | Purpose |
 |-------|-------------|----------|---------|
 | **Routing** | `intent_classification`, `query_analysis` | Gemini 1.5 Flash | Fast, cost-effective intent routing |
+| **Planner** | `task_planning`, `workflow_orchestration` | Gemini 2.5 Flash Lite | Dynamic agent execution planning |
 | **Corpus Retrieval** | `document_search`, `rag`, `hybrid_search` | Gemini 1.5 Flash + Embedding | Advanced RAG pipeline with LLM Judge |
 | **Web Search** | `web_search`, `external_search` | Gemini Flash + Tavily | Current information retrieval |
 | **Synthesis** | `response_synthesis`, `answer_generation` | Gemini 1.5 Pro | High-quality answer generation |
@@ -474,6 +483,18 @@ The "LLM as a Judge" architecture is powerful, but it can be further enhanced:
     *   **Limitation:** While `gemini-1.5-flash` is fast, a model call is still a point of latency.
     *   **Improvement:** Implement a two-stage judging process. First, use a very fast, local model (like a fine-tuned cross-encoder, if speed is paramount) to perform an initial broad filtering of the 30 candidate chunks down to the top 10. Then, use the powerful LLM Judge only on this highly-relevant, smaller set. This hybrid approach can balance speed, cost, and quality.
 
+### **ReAct Architecture Enhancements**
+
+With the introduction of the PlannerAgent, the system now implements a foundation for a full ReAct (Reason + Act) architecture:
+
+1.  **Dynamic Planning Improvements**
+    *   **Current State:** The PlannerAgent uses LLM-based planning to determine agent execution order.
+    *   **Future Enhancement:** Implement iterative planning where the PlannerAgent can dynamically adjust the plan based on intermediate results, enabling more sophisticated workflows.
+
+2.  **Reasoning and Action Loop**
+    *   **Current State:** Agents execute in a predetermined sequence based on the initial plan.
+    *   **Future Enhancement:** Enable agents to request additional information or actions during execution, creating a true Reason-Act loop where the system can adapt its approach based on intermediate findings.
+
 ### **Advanced Intelligence Agents**
 - **Multi-Document Comparison Agent**: "Compare findings between papers X and Y"
 - **Confidence Scoring Agent**: Quantify answer uncertainty
@@ -494,6 +515,7 @@ The "LLM as a Judge" architecture is powerful, but it can be further enhanced:
 2. **GraphRAG Integration**: Knowledge graph enhanced retrieval  
 3. **Real-time Learning**: Agents that improve from user feedback
 4. **Multi-modal Support**: PDF + image + table understanding
+5. **Full ReAct Implementation**: Iterative planning and execution based on intermediate results
 
 ## 🏆 Technical Highlights
 
@@ -506,8 +528,9 @@ This implementation demonstrates **senior-level engineering**:
 - **Production Ready**: Docker, environment configuration, health checks
 - **Code Quality**: Type hints, docstrings, modular design
 - **Testing Ready**: Pytest configuration and test structure
+- **Advanced Orchestration**: Transition from rule-based to LLM-based planning with ReAct architecture foundations
 
-The **extensible agent framework** is the key innovation - it transforms adding sophisticated AI capabilities from a multi-day refactoring effort into a **single file drop-in**.
+The **extensible agent framework** is the key innovation - it transforms adding sophisticated AI capabilities from a multi-day refactoring effort into a **single file drop-in**. With the addition of the PlannerAgent, the system now demonstrates cutting-edge agent orchestration patterns that move beyond static graphs to dynamic, model-driven execution plans.
 
 ## 📄 License
 

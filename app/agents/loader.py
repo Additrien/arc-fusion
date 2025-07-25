@@ -25,6 +25,7 @@ def load_all_agents():
         from . import web_search_agent
         from . import synthesis_agent
         from . import clarification_agent
+        from . import planner_agent
         
         # Log successful registration
         from .registry import AgentRegistry
@@ -45,4 +46,4 @@ def load_all_agents():
         raise
 
 # Auto-load agents when this module is imported
-load_all_agents() 
+load_all_agents()

@@ -16,10 +16,6 @@ These improvements focus on making the core retrieval and generation process mor
         2.  **Step-Back Prompting:** For a specific query, the agent could first generate a more general, "step-back" question to retrieve broader context before retrieving documents for the specific query itself.
     *   **Why it shows expertise:** This demonstrates a proactive approach to handling complex user intent and shows you can design agents that reason about the query itself before acting.
 
-*   **Adaptive Context Window Management:** The `synthesis_agent` takes the top 5 chunks. What if these chunks are very long and exceed the LLM's context window?
-    *   **How:** Implement a dynamic context packer that uses a token-aware library (like `tiktoken`) to fit as many of the top-ranked chunks as possible into the prompt without exceeding the model's token limit. It could even use context compression techniques (e.g., [LongLLMLingua](https://github.com/microsoft/LLMLingua)) to summarize less relevant chunks.
-    *   **Why it shows expertise:** It addresses a critical, practical limitation of LLMs and shows you're thinking about robustness and error prevention.
-
 ---
 
 ### 2. Agent & Orchestration Intelligence (Making the System Smarter)

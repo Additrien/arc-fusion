@@ -50,16 +50,19 @@ class AgentFramework:
         # Create the graph
         graph = StateGraph(GraphState)
         
-        # Add all registered agents as nodes
+        # Add all registered agents as nodes (except planner which is handled specially)
         agents = AgentRegistry.get_all_agents()
         logger.info(f"Adding {len(agents)} agents as graph nodes")
         
         for agent_name, config in agents.items():
+            # Skip the planner agent as it's handled specially
+            if agent_name == "planner":
+                continue
             graph.add_node(agent_name, config['function'])
             logger.debug(f"Added agent node: {agent_name}")
 
-        # Add a central orchestrator node that manages the task list
-        graph.add_node("orchestrator", self.orchestrator_node)
+        # Add the planner node that manages the task list
+        graph.add_node("planner", self.planner_node)
 
         # Set entry point (must have a routing agent)
         if 'routing' not in agents:
@@ -83,13 +86,14 @@ class AgentFramework:
         web_agent = self._get_agent_for_capability("web_search")
         synthesis_agent = self._get_agent_for_capability("response_synthesis")
         clarification_agent = self._get_agent_for_capability("query_clarification")
+        planner_agent = self._get_agent_for_capability("task_planning")
 
-        # 1. The routing agent goes to the orchestrator to initialize the task list.
-        graph.add_edge('routing', 'orchestrator')
+        # 1. The routing agent goes to the planner to create the execution plan.
+        graph.add_edge('routing', 'planner')
 
-        # 2. After the orchestrator updates the task list, a conditional router decides the next agent.
+        # 2. After the planner creates the plan, a conditional router decides the next agent.
         graph.add_conditional_edges(
-            "orchestrator",
+            "planner",
             self._routing_logic,
             {
                 # Map potential destinations to themselves
@@ -97,15 +101,16 @@ class AgentFramework:
                 **({web_agent: web_agent} if web_agent else {}),
                 **({synthesis_agent: synthesis_agent} if synthesis_agent else {}),
                 **({clarification_agent: clarification_agent} if clarification_agent else {}),
+                **({planner_agent: planner_agent} if planner_agent else {}),
                 END: END
             }
         )
 
-        # 3. Retrieval and search agents loop back to the orchestrator to update the task list status.
+        # 3. Retrieval and search agents loop back to the planner to update the task list status.
         if retrieval_agent:
-            graph.add_edge(retrieval_agent, 'orchestrator')
+            graph.add_edge(retrieval_agent, 'planner')
         if web_agent:
-            graph.add_edge(web_agent, 'orchestrator')
+            graph.add_edge(web_agent, 'planner')
 
         # 4. The synthesis agent is the final step before ending.
         if synthesis_agent:
@@ -115,28 +120,41 @@ class AgentFramework:
         if clarification_agent:
             graph.add_edge(clarification_agent, END)
 
-    def orchestrator_node(self, state: GraphState) -> Dict[str, Any]:
+    def planner_node(self, state: GraphState) -> Dict[str, Any]:
         """
-        This node manages the task list for the agentic workflow.
-        It initializes tasks on the first run and adds tasks based on intermediate results.
-        It MUST return a dictionary to update the state.
+        This node uses the PlannerAgent to dynamically plan the execution workflow.
+        It replaces the rule-based orchestrator with LLM-based planning.
         """
-        logger.debug(f"Orchestrator Node: tasks_to_run={state.get('tasks_to_run', [])}, tasks_completed={state.get('tasks_completed', [])}")
+        logger.debug(f"Planner Node: tasks_to_run={state.get('tasks_to_run', [])}, tasks_completed={state.get('tasks_completed', [])}")
         
+        # Use the PlannerAgent to determine the next steps
+        planner_agent_func = AgentRegistry.get_agent_function("planner")
+        if not planner_agent_func:
+            logger.error("Planner agent not found, using fallback logic")
+            return self._fallback_planning(state)
+        
+        # Execute the planner agent
+        updated_state = planner_agent_func(state)
+        return updated_state
+
+    def _fallback_planning(self, state: GraphState) -> Dict[str, Any]:
+        """
+        Fallback planning logic when PlannerAgent is not available.
+        """
         # First pass: Initialize tasks based on the router's intent.
         if not state.get('tasks_to_run'):
             intent = state.get('intent', 'end')
             tasks = []
             if intent == 'retrieve_corpus':
-                tasks = ['corpus_retrieval']
+                tasks = ['corpus_retrieval', 'synthesis']
             elif intent == 'search_web':
-                tasks = ['web_search']
+                tasks = ['web_search', 'synthesis']
             elif intent == 'corpus_and_web_search':
-                tasks = ['corpus_retrieval', 'web_search']
+                tasks = ['corpus_retrieval', 'web_search', 'synthesis']
             elif intent == 'clarify':
                 tasks = ['clarification']
             
-            logger.info(f"Orchestrator initialized tasks for intent '{intent}': {tasks}")
+            logger.info(f"Fallback planner initialized tasks for intent '{intent}': {tasks}")
             return {
                 "tasks_to_run": tasks,
                 "tasks_completed": []
