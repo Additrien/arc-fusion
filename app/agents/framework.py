@@ -242,9 +242,47 @@ class AgentFramework:
         if not self._built or not self.graph:
             raise RuntimeError("Graph not built. Call build_graph() first.")
         
+        # Convert conversation history to simple messages format for agents
+        # Note: We'll store this separately from LangGraph messages to avoid conflicts
+        conversation_messages = []
+        if initial_state and "conversation_history" in initial_state:
+            for entry in initial_state["conversation_history"]:
+                # Ensure entry is a dict, not a ConversationEntry dataclass object
+                if hasattr(entry, 'query') and hasattr(entry, 'answer'):  # It's a ConversationEntry dataclass
+                    entry_query = entry.query
+                    entry_answer = entry.answer
+                    entry_timestamp = entry.timestamp
+                    entry_confidence = entry.confidence
+                    entry_agent_path = entry.agent_path
+                elif isinstance(entry, dict):  # It's already a dict
+                    entry_query = entry.get("query", "")
+                    entry_answer = entry.get("answer", "")
+                    entry_timestamp = entry.get("timestamp")
+                    entry_confidence = entry.get("confidence", 0.0)
+                    entry_agent_path = entry.get("agent_path", [])
+                else:
+                    # Skip unknown entry types
+                    continue
+                
+                # Add user message as plain dict
+                conversation_messages.append({
+                    "role": "user",
+                    "content": str(entry_query),
+                    "timestamp": entry_timestamp
+                })
+                # Add assistant message as plain dict
+                conversation_messages.append({
+                    "role": "assistant", 
+                    "content": str(entry_answer),
+                    "timestamp": entry_timestamp,
+                    "confidence": float(entry_confidence),
+                    "agent_path": list(entry_agent_path) if entry_agent_path else []
+                })
+        
         # Initialize state, starting the agent_path with the entrypoint.
+        # Use empty messages for LangGraph, and add conversation_messages separately
         state = GraphState(
-            messages=[],
+            messages=[],  # Empty for LangGraph
             query=query,
             session_id=session_id,
             intent=None,
@@ -254,6 +292,7 @@ class AgentFramework:
             agent_path=['routing'], # Start the path with the entry point agent
             tasks_to_run=[],
             tasks_completed=[],
+            conversation_messages=conversation_messages,  # Add conversation history separately
             **(initial_state or {})
         )
         

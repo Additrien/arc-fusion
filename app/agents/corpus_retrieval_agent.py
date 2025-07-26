@@ -200,8 +200,29 @@ class CorpusRetrievalService:
         
         try:
             async with time_async_block("corpus_retrieval.execute_pipeline"):
+                # Get conversation history for context and ensure it's in the right format
+                conversation_history = state.get("conversation_messages", [])
+                
+                # Defensive handling: convert any LangGraph message objects to plain dicts
+                safe_conversation_history = []
+                for msg in conversation_history:
+                    if hasattr(msg, 'content') and hasattr(msg, 'type'):  # LangGraph message object
+                        # Convert LangGraph message to plain dict
+                        safe_conversation_history.append({
+                            "role": getattr(msg, 'type', 'unknown'),
+                            "content": str(msg.content),
+                            "timestamp": getattr(msg, 'timestamp', None)
+                        })
+                    elif isinstance(msg, dict):  # Already a plain dict
+                        safe_conversation_history.append(msg)
+                    else:
+                        # Skip unknown message types
+                        continue
+                
+                conversation_history = safe_conversation_history
+                
                 # Step 1&2: Parallelize HyDE and base embedding generation
-                hyde_task = asyncio.create_task(self._generate_hypothetical_document(query))
+                hyde_task = asyncio.create_task(self._generate_hypothetical_document(query, conversation_history))
                 base_embedding_task = asyncio.create_task(self._generate_query_embedding(query))
                 
                 # Wait for both to complete
@@ -365,13 +386,54 @@ class CorpusRetrievalService:
             return self._create_error_result(state, str(e))
     
     @time_async_block("corpus_retrieval.hyde_expansion")
-    async def _generate_hypothetical_document(self, query: str) -> str:
-        cache_key = f"hyde:{query}"
+    async def _generate_hypothetical_document(self, query: str, conversation_history: List[Dict[str, Any]] = None) -> str:
+        # Include conversation context in cache key for follow-up questions
+        history_context = ""
+        if conversation_history:
+            # Use last 2 exchanges for context in cache key
+            recent_messages = conversation_history[-4:]
+            # Apply defensive handling for cache key generation
+            safe_msgs = []
+            for msg in recent_messages:
+                if hasattr(msg, 'content') and hasattr(msg, 'type'):  # LangGraph message object
+                    safe_msgs.append(f"{getattr(msg, 'type', '')}: {str(msg.content)[:50]}")
+                elif isinstance(msg, dict):  # Plain dict
+                    safe_msgs.append(f"{msg.get('role', '')}:{msg.get('content', '')[:50]}")
+            history_context = "|".join(safe_msgs)
+        
+        cache_key = f"hyde:{query}|{history_context}"
         cached_result = hyde_cache.get(cache_key)
         if cached_result:
             return cached_result
         
-        hyde_prompt = f"You are an expert academic researcher. Given a research question, write a detailed paragraph that would likely appear in an academic paper answering this question.\n\nResearch Question: {query}\n\nWrite a comprehensive paragraph (100-200 words) that would contain the answer:"
+        # Build HyDE prompt with conversation context
+        hyde_prompt_parts = [
+            "You are an expert academic researcher. Given a research question, write a detailed paragraph that would likely appear in an academic paper answering this question."
+        ]
+        
+        # Add conversation history if available
+        if conversation_history:
+            hyde_prompt_parts.extend([
+                "\n## CONVERSATION CONTEXT",
+                "Previous conversation for understanding follow-up questions:"
+            ])
+            
+            for msg in conversation_history[-10:]:  # Last 10 messages
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if role == "user":
+                    hyde_prompt_parts.append(f"User: {content}")
+                elif role == "assistant":
+                    hyde_prompt_parts.append(f"Assistant: {content}")
+            
+            hyde_prompt_parts.append("\n---")
+        
+        hyde_prompt_parts.extend([
+            f"\nResearch Question: {query}",
+            "\nWrite a comprehensive paragraph (100-200 words) that would contain the answer:"
+        ])
+        
+        hyde_prompt = "\n".join(hyde_prompt_parts)
         try:
             response = await self.client.aio.models.generate_content(
                 model=self.hyde_model, 

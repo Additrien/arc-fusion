@@ -62,6 +62,9 @@ class GraphState(TypedDict):
     
     # Future extensibility - agents can add custom fields
     custom_data: Optional[Dict[str, Any]]
+    
+    # Conversation history (separate from LangGraph messages to avoid conflicts)
+    conversation_messages: Optional[List[Dict[str, Any]]]
 
 
 # Convenience type for agent functions

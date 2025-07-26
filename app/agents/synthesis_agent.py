@@ -58,8 +58,29 @@ class SynthesisService:
             # Gather available context
             context_info = self._gather_context(state)
             
-            # Create synthesis prompt
-            prompt = self._create_synthesis_prompt(query, context_info)
+            # Get conversation history from state for follow-up context and ensure it's in the right format
+            conversation_history = state.get("conversation_messages", [])
+            
+            # Defensive handling: convert any LangGraph message objects to plain dicts
+            safe_conversation_history = []
+            for msg in conversation_history:
+                if hasattr(msg, 'content') and hasattr(msg, 'type'):  # LangGraph message object
+                    # Convert LangGraph message to plain dict
+                    safe_conversation_history.append({
+                        "role": getattr(msg, 'type', 'unknown'),
+                        "content": str(msg.content),
+                        "timestamp": getattr(msg, 'timestamp', None)
+                    })
+                elif isinstance(msg, dict):  # Already a plain dict
+                    safe_conversation_history.append(msg)
+                else:
+                    # Skip unknown message types
+                    continue
+            
+            conversation_history = safe_conversation_history
+            
+            # Create synthesis prompt with conversation history
+            prompt = self._create_synthesis_prompt(query, context_info, conversation_history)
             
             # Generate response using Gemini Pro
             logger.info("Generating response with Gemini Pro")
@@ -136,13 +157,14 @@ class SynthesisService:
         context_info["total_sources"] = len(document_sources) + len(web_sources)
         return context_info
     
-    def _create_synthesis_prompt(self, query: str, context_info: Dict[str, Any]) -> str:
+    def _create_synthesis_prompt(self, query: str, context_info: Dict[str, Any], conversation_history: List[Dict[str, Any]] = None) -> str:
         """
         Create the synthesis prompt for Gemini Pro.
         
         Args:
             query: User's original query
             context_info: Organized context information
+            conversation_history: Previous conversation messages for context
             
         Returns:
             Formatted prompt for response generation
@@ -151,6 +173,23 @@ class SynthesisService:
         prompt_parts = [
             "You are an expert research assistant. Your task is to provide a comprehensive, accurate answer to the user's question using the provided context."
         ]
+        
+        # Add conversation history if available for follow-up questions
+        if conversation_history:
+            prompt_parts.extend([
+                "\n## CONVERSATION HISTORY",
+                "Here is the previous conversation for context (this helps you understand follow-up questions and references):"
+            ])
+            
+            for i, msg in enumerate(conversation_history[-10:]):  # Last 10 messages
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if role == "user":
+                    prompt_parts.append(f"\n**User**: {content}")
+                elif role == "assistant":
+                    prompt_parts.append(f"\n**Assistant**: {content}")
+            
+            prompt_parts.append("\n---")
         
         # Add context sections
         if context_info["has_document_context"]:
