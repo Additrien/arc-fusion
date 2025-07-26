@@ -82,6 +82,27 @@ class GoldenDatasetStatsResponse(BaseModel):
     created_at: Optional[str] = None
     sample_questions: List[str] = []
 
+class DocumentUploadResponse(BaseModel):
+    document_id: str
+    filename: str
+    status: str
+    message: str
+
+class DocumentStatusResponse(BaseModel):
+    status: str
+    filename: str
+    queued_at: Optional[float] = None
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    failed_at: Optional[float] = None
+    processing_time: Optional[float] = None
+    progress: Optional[str] = None
+    parent_chunks: Optional[int] = None
+    child_chunks: Optional[int] = None
+    storage_metrics: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    error_type: Optional[str] = None
+
 
 # Create a separate router for the API versions
 api_router = APIRouter(prefix="/api/v1")
@@ -123,10 +144,100 @@ async def clear_cache():
     hyde_cache.clear()
     return {"message": "All caches cleared"}
 
+# Document processing status tracking
+document_processing_status = {}
+
+async def process_document_background(document_id: str, content: bytes, filename: str):
+    """Background task for processing documents asynchronously."""
+    try:
+        # Update status to processing
+        document_processing_status[document_id] = {
+            "status": "processing",
+            "filename": filename,
+            "started_at": time.time(),
+            "progress": "Starting document processing..."
+        }
+        
+        logger.info("Background document processing started", extra={
+            "document_id": document_id,
+            "document_filename": filename
+        })
+        
+        # Process document and generate chunks
+        document_processing_status[document_id]["progress"] = "Processing document and generating chunks..."
+        result = await document_processor.process_document(content, filename)
+        
+        # Store in vector database
+        document_processing_status[document_id]["progress"] = "Storing chunks in vector database..."
+        logger.info("Storing document chunks in vector database", extra={
+            "document_id": document_id,
+            "parent_chunks": result["parent_chunk_count"],
+            "child_chunks": result["child_chunk_count"]
+        })
+        storage_result = await vector_store.store_document_chunks(result)
+        
+        # Log storage results
+        if storage_result:
+            success_rate = storage_result.get("success_rate", 0)
+            stored_chunks = storage_result.get("stored_chunks", 0)
+            total_chunks = storage_result.get("total_chunks", 0)
+            
+            logger.info("Vector storage completed", extra={
+                "document_id": document_id,
+                "stored_chunks": stored_chunks,
+                "total_chunks": total_chunks,
+                "success_rate": f"{success_rate:.2%}"
+            })
+            
+            if success_rate < 1.0:
+                logger.warning("Incomplete document storage", extra={
+                    "document_id": document_id,
+                    "missing_chunks": total_chunks - stored_chunks,
+                    "success_rate": f"{success_rate:.2%}"
+                })
+        
+        # Update status to completed
+        document_processing_status[document_id] = {
+            "status": "completed",
+            "filename": filename,
+            "started_at": document_processing_status[document_id]["started_at"],
+            "completed_at": time.time(),
+            "parent_chunks": result["parent_chunk_count"],
+            "child_chunks": result["child_chunk_count"],
+            "storage_metrics": {
+                "stored_chunks": storage_result.get("stored_chunks", 0) if storage_result else 0,
+                "success_rate": storage_result.get("success_rate", 0) if storage_result else 0
+            }
+        }
+        
+        logger.info("Background document processing completed successfully", extra={
+            "document_id": document_id,
+            "document_filename": filename,
+            "processing_time": time.time() - document_processing_status[document_id]["started_at"]
+        })
+        
+    except Exception as e:
+        # Update status to failed
+        document_processing_status[document_id] = {
+            "status": "failed",
+            "filename": filename,
+            "started_at": document_processing_status[document_id].get("started_at", time.time()),
+            "failed_at": time.time(),
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+        
+        logger.error("Background document processing failed", extra={
+            "document_id": document_id,
+            "document_filename": filename,
+            "error": str(e),
+            "error_type": type(e).__name__
+        })
+
 # Document Management Endpoints
-@app.post("/api/v1/documents", status_code=status.HTTP_201_CREATED)
-async def upload_document(file: UploadFile = File(...)):
-    """Upload and process PDF files with real-time ingestion."""
+@app.post("/api/v1/documents", status_code=status.HTTP_202_ACCEPTED, response_model=DocumentUploadResponse)
+async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """Upload and process PDF files asynchronously in the background."""
     request_id = set_request_id()
     
     logger.info("Document upload started", extra={
@@ -153,65 +264,36 @@ async def upload_document(file: UploadFile = File(...)):
             "file_size": len(content)
         })
         
-        # Process document and generate chunks
-        logger.info("Starting document processing", extra={
-            "document_filename": file.filename
-        })
-        result = await document_processor.process_document(
-            content, file.filename
-        )
+        # Generate document ID
+        document_id = str(uuid.uuid4())
         
-        # Store in vector database
-        logger.info("Storing document chunks in vector database", extra={
-            "document_id": result["document_id"],
-            "parent_chunks": result["parent_chunk_count"],
-            "child_chunks": result["child_chunk_count"]
-        })
-        storage_result = await vector_store.store_document_chunks(result)
-        
-        # Log storage results
-        if storage_result:
-            success_rate = storage_result.get("success_rate", 0)
-            stored_chunks = storage_result.get("stored_chunks", 0)
-            total_chunks = storage_result.get("total_chunks", 0)
-            
-            logger.info("Vector storage completed", extra={
-                "document_id": result["document_id"],
-                "stored_chunks": stored_chunks,
-                "total_chunks": total_chunks,
-                "success_rate": f"{success_rate:.2%}"
-            })
-            
-            if success_rate < 1.0:
-                logger.warning("Incomplete document storage", extra={
-                    "document_id": result["document_id"],
-                    "missing_chunks": total_chunks - stored_chunks,
-                    "success_rate": f"{success_rate:.2%}"
-                })
-        else:
-            logger.warning("No storage result returned from vector store")
-        
-        response = {
-            "document_id": result["document_id"],
+        # Initialize status tracking
+        document_processing_status[document_id] = {
+            "status": "queued",
             "filename": file.filename,
-            "parent_chunks": result["parent_chunk_count"],
-            "child_chunks": result["child_chunk_count"],
-            "status": "processed"
+            "queued_at": time.time(),
+            "progress": "Document queued for processing..."
         }
         
-        # Add storage metrics to response if available
-        if storage_result:
-            response.update({
-                "storage_metrics": {
-                    "stored_chunks": storage_result.get("stored_chunks", 0),
-                    "success_rate": storage_result.get("success_rate", 0)
-                }
-            })
+        # Start background processing
+        background_tasks.add_task(
+            process_document_background,
+            document_id=document_id,
+            content=content,
+            filename=file.filename
+        )
         
-        logger.info("Document upload completed successfully", extra={
-            "document_id": result["document_id"],
+        response = {
+            "document_id": document_id,
+            "filename": file.filename,
+            "status": "queued",
+            "message": "Document has been queued for processing. Use GET /api/v1/documents/{document_id}/status to check progress."
+        }
+        
+        logger.info("Document queued for background processing", extra={
+            "document_id": document_id,
             "document_filename": file.filename,
-            "processing_result": response
+            "request_id": request_id
         })
         
         return response
@@ -224,8 +306,29 @@ async def upload_document(file: UploadFile = File(...)):
         })
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process document: {str(e)}"
+            detail=f"Failed to queue document for processing: {str(e)}"
         )
+
+@app.get("/api/v1/documents/{document_id}/status", response_model=DocumentStatusResponse)
+async def get_document_status(document_id: str):
+    """Get the processing status of a specific document."""
+    if document_id not in document_processing_status:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document {document_id} not found or never existed"
+        )
+    
+    status_info = document_processing_status[document_id].copy()
+    
+    # Calculate processing time if applicable
+    if status_info["status"] == "processing" and "started_at" in status_info:
+        status_info["processing_time"] = time.time() - status_info["started_at"]
+    elif status_info["status"] == "completed" and "started_at" in status_info and "completed_at" in status_info:
+        status_info["processing_time"] = status_info["completed_at"] - status_info["started_at"]
+    elif status_info["status"] == "failed" and "started_at" in status_info and "failed_at" in status_info:
+        status_info["processing_time"] = status_info["failed_at"] - status_info["started_at"]
+    
+    return status_info
 
 @app.get("/api/v1/documents")
 async def list_documents() -> Dict[str, List[Dict[str, Any]]]:

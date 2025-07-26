@@ -17,10 +17,10 @@ PRIMARY_MODEL = "gemini-2.5-flash-lite"
 SYNTHESIS_MODEL = "models/gemini-2.5-flash"
 
 # Evaluation model for RAG quality assessment
-EVALUATION_MODEL = "models/gemini-2.5-flash"
+EVALUATION_MODEL = "models/gemini-2.5-pro"
 
 # Dataset generation model
-DATASET_GENERATION_MODEL = "models/gemini-2.5-flash"
+DATASET_GENERATION_MODEL = "models/gemini-2.5-pro"
 
 # The embedding model for retrieval. Using the latest generation model.
 EMBEDDING_MODEL = "gemini-embedding-001"
