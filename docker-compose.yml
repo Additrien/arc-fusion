@@ -31,6 +31,7 @@ services:
       - "8000:8000"
     environment:
       - WEAVIATE_URL=http://weaviate:8080
+      - VECTOR_url=http://weaviate:8080  # For VectorStoreConfig
       - FASTAPI_HOST=0.0.0.0
       - FASTAPI_PORT=8000
       - ENABLE_FILE_LOGGING=false

@@ -212,6 +212,12 @@ class AgentFramework:
         if not agent:
             logger.error(f"No agent found for capability '{task_name}', ending execution.")
             return END
+        
+        # Prevent routing back to the routing agent (entry point only)
+        if agent == 'routing':
+            logger.warning(f"Task '{task_name}' resolved to routing agent, but routing is entry-point only. Ending execution.")
+            return END
+            
         return agent
 
     def _get_agent_for_capability(self, capability: str) -> Optional[str]:

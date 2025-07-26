@@ -81,7 +81,7 @@ class ServiceFactory:
             VectorStore instance
         """
         logger.debug("Creating vector store")
-        return VectorStore()
+        return VectorStore(config=self.vector_config)
     
     def create_session_manager(self) -> SessionManager:
         """

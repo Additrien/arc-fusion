@@ -47,17 +47,6 @@ class DocumentProcessor:
         self.vector_store = vector_store
         self.config = config
         
-        # Initialize Gemini client for embeddings (needed for query embeddings)
-        self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-        from app.config import EMBEDDING_MODEL
-        self.embedding_model = EMBEDDING_MODEL
-        
-        # Rate limiting for API calls
-        from app.config import ENABLE_RATE_LIMITING, EMBEDDING_REQUEST_DELAY
-        self.rate_limiting_enabled = ENABLE_RATE_LIMITING
-        self.request_delay = EMBEDDING_REQUEST_DELAY
-        self.last_request_time = 0
-        
         # Parent chunk store (in-memory for rapid context retrieval)
         self.parent_store: Dict[str, str] = {}
     
@@ -121,88 +110,7 @@ class DocumentProcessor:
             "child_chunks": child_chunks_data,
             "parent_chunks": chunking_result.parent_chunks
         }
-    
-    async def _generate_embedding_with_retry(self, text: str) -> List[float]:
-        """Generate embedding with retry logic and rate limiting."""
-        from app.config import EMBEDDING_MAX_RETRIES, EMBEDDING_RETRY_BASE_DELAY
-        max_retries = EMBEDDING_MAX_RETRIES
-        base_delay = EMBEDDING_RETRY_BASE_DELAY
-        
-        for attempt in range(max_retries):
-            try:
-                # Rate limiting: ensure we don't exceed API limits
-                if self.rate_limiting_enabled:
-                    current_time = time.time()
-                    time_since_last = current_time - self.last_request_time
-                    
-                    if time_since_last < self.request_delay:
-                        sleep_time = self.request_delay - time_since_last
-                        logger.info(f"Rate limiting: sleeping {sleep_time:.1f}s before embedding request")
-                        await asyncio.sleep(sleep_time)
-                    
-                    self.last_request_time = time.time()
-                
-                logger.debug(f"Generating embedding (attempt {attempt + 1}/{max_retries})")
-                
-                response = await self.client.aio.models.embed_content(
-                    model=self.embedding_model,
-                    contents=text,
-                    config=types.EmbedContentConfig(
-                        task_type="RETRIEVAL_DOCUMENT",
-                        output_dimensionality=768  # Fix dimension for consistency
-                    )
-                )
-                
-                # Extract embedding values
-                if hasattr(response, 'embeddings') and response.embeddings:
-                    embedding = list(response.embeddings[0].values)
-                elif hasattr(response, 'embedding'):
-                    embedding = list(response.embedding.values)
-                else:
-                    raise ValueError("Unexpected embedding response structure")
-                
-                logger.debug("Embedding generated successfully", extra={
-                    "embedding_dimensions": len(embedding),
-                    "attempt": attempt + 1
-                })
-                return embedding
-                
-            except Exception as e:
-                error_msg = str(e).lower()
-                
-                logger.warning("Embedding generation failed", extra={
-                    "attempt": attempt + 1,
-                    "error": str(e),
-                    "error_type": type(e).__name__
-                })
-                
-                # Check if it's a rate limit or quota error
-                if "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
-                    if attempt < max_retries - 1:
-                        # Exponential backoff with longer delays for quota issues
-                        delay = base_delay * (2 ** attempt)
-                        if "quota" in error_msg:
-                            delay = max(delay, 60)  # At least 1 minute for quota issues
-                        
-                        logger.warning("API rate/quota limit hit, will retry", extra={
-                            "attempt": attempt + 1,
-                            "max_retries": max_retries,
-                            "retry_delay": delay,
-                            "error": str(e)
-                        })
-                        await asyncio.sleep(delay)
-                        continue
-                
-                # For other errors or max retries reached, raise
-                logger.error("Failed to generate embedding", extra={
-                    "attempt": attempt + 1,
-                    "max_retries": max_retries,
-                    "final_error": str(e)
-                })
-                raise Exception(f"Failed to generate embedding after {max_retries} attempts: {str(e)}")
-        
-        logger.error("Max retries exceeded for embedding generation")
-        raise Exception("Max retries exceeded for embedding generation")
+
     
     def get_parent_chunk(self, parent_id: str) -> Optional[str]:
         """Retrieve parent chunk by ID."""

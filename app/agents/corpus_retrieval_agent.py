@@ -23,6 +23,8 @@ import asyncio
 from app.agents.state import GraphState
 from app.agents.registry import AgentRegistry
 from app.core.vector_store import VectorStore
+from app.core.embeddings.embedding_service import EmbeddingService
+from app.core.config.services import VectorStoreConfig, EmbeddingConfig
 from app.utils.logger import get_logger
 from app.utils.cache import embedding_cache, hyde_cache
 from app.utils.performance import time_async_block
@@ -47,11 +49,13 @@ class CorpusRetrievalService:
         # Use models from central config with new API
         self.hyde_model = config.PRIMARY_MODEL
         
-        # Embedding model for queries - using new google-genai SDK
-        self.embedding_model = config.EMBEDDING_MODEL
+        # Load configurations
+        self.vector_config = VectorStoreConfig()
+        self.embedding_config = EmbeddingConfig()
         
         # Core services
-        self.vector_store = VectorStore()
+        self.vector_store = VectorStore(config=self.vector_config)
+        self.embedding_service = EmbeddingService(config=self.embedding_config)
         
         # Configure Gemini with new API
         self.client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
@@ -227,15 +231,26 @@ class CorpusRetrievalService:
                 
                 logger.info(f"Retrieved {len(parent_chunks)} unique parent chunks.")
                 
+                # Debug: Log the actual scores we're getting
+                if hybrid_scores:
+                    logger.info(f"Hybrid scores range: min={min(hybrid_scores):.4f}, max={max(hybrid_scores):.4f}, avg={sum(hybrid_scores)/len(hybrid_scores):.4f}")
+                    logger.info(f"First 5 scores: {[f'{score:.4f}' for score in hybrid_scores[:5]]}")
+                
+                # Debug: Also log some sample child results to see distance vs score
+                if child_results:
+                    logger.info(f"Sample child result - distance: {child_results[0].get('distance', 'missing')}, score: {child_results[0].get('score', 'missing')}")
+                    logger.info(f"Child result keys: {list(child_results[0].keys())}")
+                
                 # Filter out chunks with very low scores
                 scored_tuples = list(zip(hybrid_scores, parent_chunks, sources))
 
                 # Apply minimum score threshold
-                filtered_tuples = [t for t in scored_tuples if t[0] >= config.MIN_CHUNK_SCORE]
+                logger.info(f"Using min_chunk_score threshold: {self.vector_config.min_chunk_score}")
+                filtered_tuples = [t for t in scored_tuples if t[0] >= self.vector_config.min_chunk_score]
                 removed_count = len(scored_tuples) - len(filtered_tuples)
                 
                 if removed_count > 0:
-                    logger.info(f"Filtered out {removed_count} chunks with scores below {config.MIN_CHUNK_SCORE}")
+                    logger.info(f"Filtered out {removed_count} chunks with scores below {self.vector_config.min_chunk_score}")
                 
                 if not filtered_tuples:
                     logger.warning("No chunks remain after score filtering")
@@ -375,18 +390,16 @@ class CorpusRetrievalService:
 
     @time_async_block("corpus_retrieval.embedding_generation")
     async def _generate_query_embedding(self, query: str) -> List[float]:
+        """Generate query embedding using EmbeddingService."""
         cache_key = f"embedding:{query}"
         cached_result = embedding_cache.get(cache_key)
         if cached_result:
             return cached_result
         
         try:
-            response = await self.client.aio.models.embed_content(
-                model=self.embedding_model,
-                contents=query,
-                config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY", output_dimensionality=768)
-            )
-            embedding = response.embeddings[0].values
+            # Use EmbeddingService for consistency and unified configuration
+            embeddings = await self.embedding_service.generate_embeddings([query])
+            embedding = embeddings[0]
             embedding_cache.set(cache_key, embedding)
             return embedding
         except Exception as e:

@@ -61,11 +61,11 @@ RERANKER_TOP_K = 4
 # --- Hybrid Search Relevance ---
 # On a scale of 0-1, the minimum hybrid score for a chunk to be considered "relevant".
 # This is used in the framework for routing to synthesis vs. web search.
-RELEVANCE_THRESHOLD = 0.7
+RELEVANCE_THRESHOLD = 0.85
 
 # Minimum score threshold for individual chunks (filters out very low quality chunks)
 # Chunks with scores below this threshold are discarded before reranking or synthesis
-MIN_CHUNK_SCORE = 0.4
+MIN_CHUNK_SCORE = 0.7
 
 
 # --- Routing Agent ---

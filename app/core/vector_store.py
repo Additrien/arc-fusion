@@ -1,19 +1,22 @@
 import os
 import weaviate
 import weaviate.classes as wvc
+from weaviate.classes.config import Configure
 from typing import Dict, List, Any, Optional
 from weaviate.classes.init import Auth
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from app.utils.performance import time_async_function, time_async_block
+from app.core.config.services import VectorStoreConfig
 
 class VectorStore:
     """Handles Weaviate vector database operations."""
     
-    def __init__(self):
-        self.weaviate_url = os.getenv("WEAVIATE_URL", "http://localhost:8080")
-        self.collection_name = "DocumentChunks"
-        self.parent_collection_name = "ParentChunks"  # New collection for parent chunks
+    def __init__(self, config: Optional[VectorStoreConfig] = None):
+        self.config = config or VectorStoreConfig()
+        self.weaviate_url = self.config.url
+        self.collection_name = self.config.collection_name
+        self.parent_collection_name = self.config.parent_collection_name
         self.client = None
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._connected = False
@@ -42,15 +45,23 @@ class VectorStore:
     async def _create_collection(self):
         """Create the DocumentChunks and ParentChunks collections with proper schema."""
         def _create_sync():
+            from app.utils.logger import get_logger
+            logger = get_logger('arc_fusion.vector_store.collection_creation')
+            
             # Create child chunks collection
             try:
+                logger.info("Checking if DocumentChunks collection exists...")
                 # Check if collection exists
                 existing_collection = self.client.collections.get(self.collection_name)
+                logger.info("DocumentChunks collection already exists, skipping creation")
                 # Collection exists, no need to create
             except Exception:
                 # Collection doesn't exist, create it
                 try:
-                    self.client.collections.create(
+                    logger.info("Creating DocumentChunks collection with vector configuration...")
+                    logger.info(f"Using Configure.Vectors.self_provided: {Configure.Vectors.self_provided}")
+                    
+                    collection = self.client.collections.create(
                         name=self.collection_name,
                         properties=[
                             wvc.config.Property(
@@ -83,19 +94,26 @@ class VectorStore:
                                 data_type=wvc.config.DataType.INT,
                                 description="Child chunk index"
                             )
-                        ]
+                        ],
+                        # Configure for manual vector storage
+                        vector_config=Configure.Vectors.self_provided
                     )
+                    logger.info(f"Successfully created DocumentChunks collection: {collection}")
                 except Exception as e:
+                    logger.error(f"Failed to create child chunks collection: {str(e)}")
                     raise Exception(f"Failed to create child chunks collection: {str(e)}")
             
             # Create parent chunks collection
             try:
+                logger.info("Checking if ParentChunks collection exists...")
                 # Check if parent collection exists
                 existing_parent_collection = self.client.collections.get(self.parent_collection_name)
+                logger.info("ParentChunks collection already exists, skipping creation")
                 # Collection exists, no need to create
             except Exception:
                 # Collection doesn't exist, create it
                 try:
+                    logger.info("Creating ParentChunks collection...")
                     self.client.collections.create(
                         name=self.parent_collection_name,
                         properties=[
@@ -121,7 +139,9 @@ class VectorStore:
                             )
                         ]
                     )
+                    logger.info("Successfully created ParentChunks collection")
                 except Exception as e:
+                    logger.error(f"Failed to create parent chunks collection: {str(e)}")
                     raise Exception(f"Failed to create parent chunks collection: {str(e)}")
         
         await asyncio.get_event_loop().run_in_executor(self.executor, _create_sync)
@@ -208,6 +228,9 @@ class VectorStore:
                         uuid=chunk_data["id"]
                     )
                 )
+                
+                # Debug: Log embedding info
+                logger.info(f"Adding object with embedding: dim={len(embedding)}, first_vals={embedding[:3]}, uuid={chunk_data['id']}")
             
             # Store batch with error handling
             try:
@@ -554,7 +577,9 @@ class VectorStore:
                                             data_type=wvc.config.DataType.INT,
                                             description="Child chunk index"
                                         )
-                                    ]
+                                    ],
+                                    # Configure for manual vector storage
+                                    vector_config=wvc.config.Configure.Vectors.self_provided()
                                 )
                             except Exception:
                                 pass  # Collection might already exist
