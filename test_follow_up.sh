@@ -1,77 +1,170 @@
 #!/bin/bash
 
-# Test script for follow-up questions functionality
+# Comprehensive test script for Arc-Fusion ReAct and Advanced Clarification features
 
-echo "🧪 Testing Follow-up Questions Implementation"
-echo "============================================="
-
-# Generate a unique session ID for this test
-SESSION_ID="test-session-$(date +%s)"
-echo "Using session ID: $SESSION_ID"
-
-# First question
+echo "🧪 Testing Arc-Fusion Enhanced Multi-Agent System"
+echo "================================================="
+echo "Testing: ReAct (Reason + Act), Advanced Clarification, and Follow-up Questions"
 echo ""
-echo "📝 First Question:"
-echo "Which prompt template gave the highest zero-shot accuracy on Spider in Zhang et al. (2024)?"
 
-FIRST_RESPONSE=$(curl -s -X POST "http://localhost:8000/api/v1/ask" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"query\": \"Which prompt template gave the highest zero-shot accuracy on Spider in Zhang et al. (2024)?\",
-    \"session_id\": \"$SESSION_ID\"
-  }")
+# Function to make API call and extract response details
+make_request() {
+    local query="$1"
+    local session_id="$2"
+    local test_name="$3"
+    
+    echo "📝 $test_name:"
+    echo "Query: $query"
+    echo ""
+    
+    local response=$(curl -s -X POST "http://localhost:8000/api/v1/ask" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"query\": \"$query\",
+            \"session_id\": \"$session_id\"
+        }")
+    
+    echo "✅ Response:"
+    echo "$response" | jq '.answer' -r
+    echo ""
+    echo "📊 Metadata:"
+    echo "  Session ID: $(echo "$response" | jq '.session_id' -r)"
+    echo "  Agent Path: $(echo "$response" | jq '.agent_path' -r)"
+    echo "  Confidence: $(echo "$response" | jq '.confidence')"
+    echo "  Processing Time: $(echo "$response" | jq '.processing_time')s"
+    echo "  Success: $(echo "$response" | jq '.success')"
+    
+    # Check if there are citations
+    local citations=$(echo "$response" | jq '.citations | length')
+    if [ "$citations" -gt 0 ]; then
+        echo "  Citations: $citations sources"
+        echo "$response" | jq '.citations[] | "    - " + .filename + " (score: " + (.score | tostring) + ")"' -r
+    fi
+    
+    echo ""
+    echo "----------------------------------------"
+    echo ""
+    
+    sleep 2  # Brief pause between requests
+}
+
+# Test 1: Basic Follow-up Questions (Context Continuity)
+echo "🔗 TEST 1: Follow-up Questions & Context Continuity"
+echo "===================================================="
+SESSION_1="followup-test-$(date +%s)"
+
+make_request "Which prompt template gave the highest zero-shot accuracy on Spider in Zhang et al. (2024)?" "$SESSION_1" "Initial Question"
+make_request "What accuracy did it achieve?" "$SESSION_1" "Follow-up Question 1"
+make_request "How does that compare to other methods mentioned in the paper?" "$SESSION_1" "Follow-up Question 2"
+
+# Test 2: Advanced Clarification System
+echo "🤔 TEST 2: Advanced Clarification System"
+echo "========================================="
+SESSION_2="clarification-test-$(date +%s)"
+
+make_request "How many examples are enough for good accuracy?" "$SESSION_2" "Ambiguous Query - Vague Quantifier"
+make_request "What's the best method for this?" "$SESSION_2" "Ambiguous Query - Undefined Referent"
+make_request "How does it perform compared to others?" "$SESSION_2" "Ambiguous Query - Unclear Comparison"
+
+# Test 3: ReAct System - Complex Multi-Step Query
+echo "🧠 TEST 3: ReAct System - Complex Multi-Step Reasoning"
+echo "======================================================"
+SESSION_3="react-test-$(date +%s)"
+
+make_request "Compare the effectiveness of different prompt engineering techniques for code generation, focusing on accuracy improvements over baseline approaches in recent papers." "$SESSION_3" "Complex Multi-Step Query"
+
+# Test 4: ReAct System - Quality-Driven Replanning
+echo "🔄 TEST 4: ReAct Quality-Driven Replanning"
+echo "=========================================="
+SESSION_4="replanning-test-$(date +%s)"
+
+make_request "What are the latest developments in transformer architecture optimization published this month?" "$SESSION_4" "Query Likely to Trigger Web Search Fallback"
+
+# Test 5: Domain-Specific Queries
+echo "🎯 TEST 5: Domain-Specific Academic Queries"
+echo "==========================================="
+SESSION_5="academic-test-$(date +%s)"
+
+make_request "What execution accuracy does davinci-codex reach on Spider with the 'Create Table + Select 3' prompt?" "$SESSION_5" "Specific Academic Query"
+make_request "Are there any other models tested with similar prompts?" "$SESSION_5" "Follow-up for Comparison"
+
+# Test 6: Edge Cases and Error Handling
+echo "⚠️ TEST 6: Edge Cases and Error Handling"
+echo "========================================"
+SESSION_6="edge-test-$(date +%s)"
+
+make_request "" "$SESSION_6" "Empty Query"
+make_request "What did OpenAI release this month?" "$SESSION_6" "Out-of-Scope Query (Should Trigger Web Search)"
+make_request "asdfghjkl qwertyuiop" "$SESSION_6" "Nonsensical Query"
+
+# Test 7: Session Memory Management
+echo "🧠 TEST 7: Session Memory Management"
+echo "===================================="
+SESSION_7="memory-test-$(date +%s)"
+
+make_request "What is HyDE in retrieval augmented generation?" "$SESSION_7" "Initial Question About HyDE"
+make_request "How is it implemented?" "$SESSION_7" "Follow-up Should Reference HyDE"
+
+# Clear memory and test
+echo "🗑️ Clearing session memory..."
+curl -s -X POST "http://localhost:8000/api/v1/clear-memory" \
+    -H "Content-Type: application/json" \
+    -d "{\"session_id\": \"$SESSION_7\"}" | jq '.message' -r
+
+make_request "How is it implemented?" "$SESSION_7" "Same Follow-up After Memory Clear (Should Ask for Clarification)"
+
+# Test 8: System Performance and Monitoring
+echo "📊 TEST 8: System Performance Monitoring"
+echo "========================================"
+
+echo "📈 Performance Metrics:"
+curl -s -X GET "http://localhost:8000/api/v1/performance" | jq '.'
 
 echo ""
-echo "✅ First Response:"
-echo "$FIRST_RESPONSE" | jq '.answer' -r
-echo ""
-echo "Session ID: $(echo "$FIRST_RESPONSE" | jq '.session_id' -r)"
-echo "Agent Path: $(echo "$FIRST_RESPONSE" | jq '.agent_path' -r)"
-echo "Confidence: $(echo "$FIRST_RESPONSE" | jq '.confidence')"
-
-# Wait a moment between requests
-sleep 2
-
-# Follow-up question
-echo ""
-echo "📝 Follow-up Question:"
-echo "What accuracy did it achieve?"
-
-SECOND_RESPONSE=$(curl -s -X POST "http://localhost:8000/api/v1/ask" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"query\": \"What accuracy did it achieve?\",
-    \"session_id\": \"$SESSION_ID\"
-  }")
+echo "💾 Cache Information:"
+curl -s -X GET "http://localhost:8000/api/v1/cache" | jq '.'
 
 echo ""
-echo "✅ Follow-up Response:"
-echo "$SECOND_RESPONSE" | jq '.answer' -r
-echo ""
-echo "Session ID: $(echo "$SECOND_RESPONSE" | jq '.session_id' -r)"
-echo "Agent Path: $(echo "$SECOND_RESPONSE" | jq '.agent_path' -r)"
-echo "Confidence: $(echo "$SECOND_RESPONSE" | jq '.confidence')"
-
-# Test another follow-up
-echo ""
-echo "📝 Second Follow-up Question:"
-echo "How does that compare to other methods mentioned in the paper?"
-
-THIRD_RESPONSE=$(curl -s -X POST "http://localhost:8000/api/v1/ask" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"query\": \"How does that compare to other methods mentioned in the paper?\",
-    \"session_id\": \"$SESSION_ID\"
-  }")
+echo "📁 Document Statistics:"
+curl -s -X GET "http://localhost:8000/api/v1/documents/stats" | jq '.'
 
 echo ""
-echo "✅ Second Follow-up Response:"
-echo "$THIRD_RESPONSE" | jq '.answer' -r
-echo ""
-echo "Session ID: $(echo "$THIRD_RESPONSE" | jq '.session_id' -r)"
-echo "Agent Path: $(echo "$THIRD_RESPONSE" | jq '.agent_path' -r)"
-echo "Confidence: $(echo "$THIRD_RESPONSE" | jq '.confidence')"
+echo "🤖 Agent Information:"
+curl -s -X GET "http://localhost:8000/api/v1/agents/info" | jq '.'
 
+# Test 9: System Health Check
 echo ""
-echo "🔍 Test Complete!"
-echo "Check if the follow-up questions understood the context from previous answers."
+echo "🏥 TEST 9: System Health Check"
+echo "=============================="
+
+echo "Health Status:"
+curl -s -X GET "http://localhost:8000/health" | jq '.'
+
+# Summary
+echo ""
+echo "🎉 COMPREHENSIVE TEST COMPLETE!"
+echo "==============================="
+echo "✅ Tests completed for:"
+echo "   - Follow-up questions and context continuity"
+echo "   - Advanced clarification system"
+echo "   - ReAct iterative reasoning and replanning"
+echo "   - Complex multi-step queries"
+echo "   - Domain-specific academic queries"
+echo "   - Edge cases and error handling"
+echo "   - Session memory management"
+echo "   - System performance monitoring"
+echo "   - Health checks"
+echo ""
+echo "🔍 Review the responses above to verify:"
+echo "   - Context is maintained across follow-up questions"
+echo "   - Ambiguous queries trigger helpful clarification"
+echo "   - Complex queries show adaptive agent paths"
+echo "   - System gracefully handles edge cases"
+echo "   - Performance metrics are reasonable"
+echo ""
+echo "💡 Look for evidence of ReAct behavior:"
+echo "   - Agent paths that include multiple retrieval strategies"
+echo "   - Different confidence scores based on query complexity"
+echo "   - Adaptive responses to low-quality initial results"
+echo ""
+echo "📝 Test completed at: $(date)"

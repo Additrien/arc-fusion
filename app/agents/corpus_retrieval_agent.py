@@ -364,11 +364,24 @@ class CorpusRetrievalService:
                     source_with_score['score'] = float(score)  # Add hybrid score
                     final_sources.append(source_with_score)
                 
-            best_retrieval_score = max(retrieval_scores) if retrieval_scores else 0.0
+                best_retrieval_score = max(retrieval_scores) if retrieval_scores else 0.0
             
             logger.info(f"Selected {len(final_context)} final chunks. Best score: {best_retrieval_score:.3f}")
             
-            # Update state for the orchestrator
+            # ReAct Enhancement: Generate observations and evidence for the planner
+            observation = self._generate_observation(
+                query, final_context, final_sources, retrieval_scores, best_retrieval_score
+            )
+            
+            # Gather evidence for ReAct reasoning
+            evidence = self._gather_evidence(final_context, final_sources, retrieval_scores)
+            
+            # Determine if replanning is needed based on retrieval quality
+            needs_replanning = self._should_trigger_replanning(
+                best_retrieval_score, len(final_context), query
+            )
+            
+            # Update state for the orchestrator with ReAct enhancements
             updated_state = state.copy()
             updated_state.update({
                 "retrieved_context": final_context,
@@ -376,7 +389,12 @@ class CorpusRetrievalService:
                 "retrieval_scores": retrieval_scores,
                 "best_retrieval_score": best_retrieval_score,
                 "step_count": state.get("step_count", 0) + 1,
-                "tasks_completed": state.get("tasks_completed", []) + ["corpus_retrieval"]
+                "tasks_completed": state.get("tasks_completed", []) + ["corpus_retrieval"],
+                # ReAct enhancements
+                "observations": state.get("observations", []) + [observation],
+                "gathered_evidence": state.get("gathered_evidence", []) + evidence,
+                "needs_replanning": needs_replanning,
+                "current_focus": self._determine_focus(query, best_retrieval_score, len(final_context))
             })
             
             return updated_state
@@ -521,6 +539,89 @@ class CorpusRetrievalService:
         })
         updated_state["errors"]["retrieval_error"] = error_message
         return updated_state
+    
+    def _generate_observation(self, query: str, context: List[str], sources: List[Dict[str, Any]], 
+                             scores: List[float], best_score: float) -> Dict[str, Any]:
+        """Generate ReAct observation from retrieval results."""
+        
+        # Analyze retrieval quality
+        quality_assessment = "high" if best_score >= 0.8 else "medium" if best_score >= 0.5 else "low"
+        
+        # Determine status and details
+        if not context:
+            status = "no_results_found"
+            details = "No relevant documents found in corpus"
+        elif best_score < 0.3:
+            status = "quality_too_low"
+            details = f"Best relevance score {best_score:.3f} is too low for reliable answers"
+        elif len(context) < 2:
+            status = "context_insufficient"
+            details = f"Only {len(context)} relevant chunk found, may need additional sources"
+        else:
+            status = "retrieval_successful"
+            details = f"Found {len(context)} relevant chunks with best score {best_score:.3f}"
+        
+        return {
+            "agent": "corpus_retrieval",
+            "status": status,
+            "details": details,
+            "quality_assessment": quality_assessment,
+            "chunks_found": len(context),
+            "best_score": best_score,
+            "quality_too_low": best_score < 0.3,
+            "context_insufficient": len(context) < 2,
+            "needs_web_fallback": best_score < 0.5,
+            "timestamp": 0  # Will be updated by caller
+        }
+    
+    def _gather_evidence(self, context: List[str], sources: List[Dict[str, Any]], 
+                        scores: List[float]) -> List[Dict[str, Any]]:
+        """Gather evidence from retrieval results for ReAct reasoning."""
+        evidence = []
+        
+        for i, (chunk, source, score) in enumerate(zip(context, sources, scores)):
+            # Extract key information from chunk
+            summary = chunk[:200] + "..." if len(chunk) > 200 else chunk
+            
+            evidence.append({
+                "source": source.get("filename", "Unknown"),
+                "summary": summary,
+                "quality_score": float(score),
+                "chunk_index": i + 1,
+                "evidence_type": "document_chunk"
+            })
+        
+        return evidence
+    
+    def _should_trigger_replanning(self, best_score: float, chunk_count: int, query: str) -> bool:
+        """Determine if replanning should be triggered based on retrieval quality."""
+        
+        # Trigger replanning if:
+        triggers = [
+            best_score < 0.3,  # Very low quality
+            chunk_count == 0,  # No results
+            chunk_count == 1 and "compare" in query.lower(),  # Comparison query with insufficient context
+            best_score < 0.5 and any(term in query.lower() for term in ["recent", "latest", "current", "new"])  # Temporal query with low quality
+        ]
+        
+        should_replan = any(triggers)
+        
+        if should_replan:
+            logger.info(f"ReAct: Triggering replanning due to retrieval quality issues. Best score: {best_score:.3f}, chunks: {chunk_count}")
+        
+        return should_replan
+    
+    def _determine_focus(self, query: str, best_score: float, chunk_count: int) -> str:
+        """Determine what the system should focus on next."""
+        
+        if best_score < 0.3:
+            return "web_search_fallback"
+        elif chunk_count < 2 and any(word in query.lower() for word in ["compare", "versus", "vs"]):
+            return "comparison_needs_more_sources"
+        elif best_score < 0.5:
+            return "supplementary_web_search"
+        else:
+            return "synthesis_ready"
 
 
 # Create the service instance

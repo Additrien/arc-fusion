@@ -15,6 +15,7 @@ class GraphState(TypedDict):
     
     This comprehensive state allows agents to communicate and share context
     while maintaining the conversation flow and accumulated knowledge.
+    Enhanced for ReAct (Reason + Act) patterns and advanced clarification.
     """
     
     # Core conversation data
@@ -59,6 +60,23 @@ class GraphState(TypedDict):
     # Orchestration state for multi-step information gathering
     tasks_to_run: List[str]
     tasks_completed: List[str]
+    
+    # ReAct Enhancement: Iterative reasoning and observation
+    reasoning_log: Optional[List[Dict[str, Any]]]  # Track reasoning steps
+    observations: Optional[List[Dict[str, Any]]]  # Observations from each action
+    needs_replanning: Optional[bool]  # Flag to trigger planner re-evaluation
+    plan_iterations: Optional[int]  # Track how many times we've replanned
+    max_plan_iterations: Optional[int]  # Limit replanning to avoid loops
+    current_focus: Optional[str]  # What the system is currently focusing on
+    gathered_evidence: Optional[List[Dict[str, Any]]]  # Evidence collected so far
+    
+    # Advanced Clarification Enhancement
+    ambiguity_analysis: Optional[Dict[str, Any]]  # Analysis of what's ambiguous
+    clarification_options: Optional[List[Dict[str, Any]]]  # Specific options to offer user
+    context_summary: Optional[str]  # Summary of available context for clarification
+    clarification_round: Optional[int]  # Track multi-turn clarification
+    user_preferences: Optional[Dict[str, Any]]  # Learned user preferences
+    disambiguation_context: Optional[List[Dict[str, Any]]]  # Context for disambiguation
     
     # Future extensibility - agents can add custom fields
     custom_data: Optional[Dict[str, Any]]

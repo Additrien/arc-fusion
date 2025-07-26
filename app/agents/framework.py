@@ -122,20 +122,51 @@ class AgentFramework:
 
     def planner_node(self, state: GraphState) -> Dict[str, Any]:
         """
-        This node uses the PlannerAgent to dynamically plan the execution workflow.
-        It replaces the rule-based orchestrator with LLM-based planning.
+        Enhanced ReAct planner node that handles iterative reasoning and replanning.
+        This replaces the rule-based orchestrator with LLM-based planning.
         """
-        logger.debug(f"Planner Node: tasks_to_run={state.get('tasks_to_run', [])}, tasks_completed={state.get('tasks_completed', [])}")
+        tasks_to_run = state.get('tasks_to_run', [])
+        tasks_completed = state.get('tasks_completed', [])
+        plan_iterations = state.get('plan_iterations', 0)
+        needs_replanning = state.get('needs_replanning', False)
         
-        # Use the PlannerAgent to determine the next steps
+        logger.debug(f"ReAct Planner Node: tasks_to_run={tasks_to_run}, tasks_completed={tasks_completed}, plan_iterations={plan_iterations}, needs_replanning={needs_replanning}")
+        
+        # Use the PlannerAgent to determine the next steps with ReAct capabilities
         planner_agent_func = AgentRegistry.get_agent_function("planner")
         if not planner_agent_func:
             logger.error("Planner agent not found, using fallback logic")
             return self._fallback_planning(state)
         
-        # Execute the planner agent
+        # Check if we need to trigger replanning based on observations
+        if needs_replanning or self._should_replan_based_on_observations(state):
+            logger.info("ReAct: Triggering replanning based on agent observations")
+            # Reset the flag and allow planner to create new plan
+            state = state.copy()
+            state["needs_replanning"] = True
+        
+        # Execute the enhanced planner agent with ReAct support
         updated_state = planner_agent_func(state)
         return updated_state
+    
+    def _should_replan_based_on_observations(self, state: GraphState) -> bool:
+        """Check if observations from agents suggest we should replan."""
+        observations = state.get('observations', [])
+        if not observations:
+            return False
+        
+        # Get the most recent observation
+        latest_obs = observations[-1]
+        
+        # Triggers for replanning based on agent observations
+        triggers = [
+            latest_obs.get('quality_too_low', False),
+            latest_obs.get('context_insufficient', False),
+            latest_obs.get('needs_web_fallback', False),
+            latest_obs.get('contradictory_evidence', False)
+        ]
+        
+        return any(triggers)
 
     def _fallback_planning(self, state: GraphState) -> Dict[str, Any]:
         """
