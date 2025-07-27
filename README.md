@@ -718,14 +718,12 @@ def cache_agent(state: GraphState) -> GraphState:
         return cached_response
     return state
 ```
-- **Effort**: 4-6 hours
 - **Impact**: 80% faster responses for repeated queries
 - **Implementation**: Simple dictionary cache with TTL
 
 **Enhanced Prompt Engineering**
 - **Current**: Generic prompts for all agents
 - **Quick Win**: Add few-shot examples to improve consistency
-- **Effort**: 2-4 hours per agent
 - **Impact**: 15-20% better response quality
 
 **Configuration Exposure**
@@ -735,7 +733,6 @@ RETRIEVAL_THRESHOLD = float(os.getenv("RETRIEVAL_THRESHOLD", 0.7))
 MAX_CONTEXT_CHUNKS = int(os.getenv("MAX_CONTEXT_CHUNKS", 4))
 SYNTHESIS_TEMPERATURE = float(os.getenv("SYNTHESIS_TEMPERATURE", 0.1))
 ```
-- **Effort**: 2-3 hours
 - **Impact**: Runtime tuning without code changes
 
 **Basic Request Analytics**
@@ -751,16 +748,14 @@ def analytics_agent(state: GraphState) -> GraphState:
     })
     return state
 ```
-- **Effort**: 3-4 hours
 - **Impact**: Immediate insights into usage patterns
 
 **Citation Formatting Enhancement**
 - **Current**: Basic citation objects
 - **Quick Win**: Rich markdown formatting with page numbers
-- **Effort**: 4-6 hours
 - **Impact**: More professional, academic-style citations
 
-### **⚡ Medium Effort **
+### **Medium Effort**
 
 **Confidence Scoring Agent**
 ```python
@@ -874,7 +869,6 @@ SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", 24))
 ENABLE_SESSION_PERSISTENCE = os.getenv("ENABLE_SESSION_PERSISTENCE", "true").lower() == "true"
 ```
 
-**Effort**: 1-2 days for basic implementation, 3-4 days with advanced features
 **Impact**: Production-ready session management + horizontal scaling capability
 
 **Query Preprocessing Agent**
