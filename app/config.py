@@ -45,7 +45,7 @@ RELEVANCE_THRESHOLD = 0.85
 
 # Minimum score threshold for individual chunks (filters out very low quality chunks)
 # Chunks with scores below this threshold are discarded before synthesis
-MIN_CHUNK_SCORE = 0.5
+MIN_CHUNK_SCORE = 0.6
 
 
 # --- Routing Agent ---
