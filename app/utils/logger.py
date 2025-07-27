@@ -194,16 +194,6 @@ def setup_logging(
                 'propagate': False,
             },
             # Suppress noisy third-party loggers
-            'sentence_transformers': {
-                'level': 'WARNING',
-                'handlers': root_handlers,
-                'propagate': False,
-            },
-            'transformers': {
-                'level': 'WARNING',
-                'handlers': root_handlers,
-                'propagate': False,
-            },
             'weaviate': {
                 'level': 'WARNING',
                 'handlers': root_handlers,
@@ -280,4 +270,4 @@ def init_logging_from_env() -> None:
         log_format=os.getenv("LOG_FORMAT", "console"),  # "console" for dev, "json" for prod
         enable_file_logging=os.getenv("ENABLE_FILE_LOGGING", "true").lower() == "true",
         log_file_path=os.getenv("LOG_FILE_PATH", "logs/arc-fusion.log")
-    ) 
+    )

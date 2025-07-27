@@ -23,10 +23,6 @@ numpy>=1.24.3
 # Vector database client
 weaviate-client>=4.7.1
 
-# Vector embeddings and similarity
-sentence-transformers>=2.2.2
-faiss-cpu>=1.7.4
-
 # Language models and AI
 google-genai>=1.27.0  # Modern Google AI library
 langchain>=0.2.16
@@ -34,8 +30,6 @@ langchain-google-genai>=2.1.8
 openai>=1.48.0
 
 # Text processing and NLP
-transformers>=4.30.0
-torch>=2.0.0
 spacy>=3.6.1
 
 # Async and concurrency

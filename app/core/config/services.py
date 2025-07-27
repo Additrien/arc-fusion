@@ -72,20 +72,3 @@ class SessionConfig(BaseSettings):
     
     class Config:
         env_prefix = "SESSION_"
-
-
-class RerankerConfig(BaseSettings):
-    """Configuration for reranker service."""
-    
-    # Model parameters - imported from main config
-    model_name: str = config.RERANKER_MODEL
-    enable_reranking: bool = config.ENABLE_RERANKING
-    enable_quantization: bool = config.ENABLE_MODEL_QUANTIZATION
-    
-    # Processing parameters
-    max_length: int = 8192
-    batch_size_cpu: int = 8
-    batch_size_gpu: int = 2
-    
-    class Config:
-        env_prefix = "RERANKER_"

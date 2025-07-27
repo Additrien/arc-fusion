@@ -35,8 +35,8 @@ make_request() {
     echo "  Success: $(echo "$response" | jq '.success')"
     
     # Check if there are citations
-    local citations=$(echo "$response" | jq '.citations | length')
-    if [ "$citations" -gt 0 ]; then
+    local citations=$(echo "$response" | jq '.citations | length // 0')
+    if [ "${citations:-0}" -gt 0 ]; then
         echo "  Citations: $citations sources"
         echo "$response" | jq '.citations[] | "    - " + .filename + " (score: " + (.score | tostring) + ")"' -r
     fi

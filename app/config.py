@@ -26,36 +26,16 @@ DATASET_GENERATION_MODEL = "models/gemini-2.5-pro"
 EMBEDDING_MODEL = "gemini-embedding-001"
 
 
-# --- Reranking & Context Selection ---
-# Enables the two-stage retrieval process with a Cross-Encoder reranker.
-# Can be disabled via ENABLE_RERANKING=false environment variable for faster responses
-ENABLE_RERANKING = os.getenv("ENABLE_RERANKING", "true").lower() == "true"
-
-# The Cross-Encoder model to use for reranking.
-# See: https://huggingface.co/Qwen/Qwen3-Reranker-0.6B
-RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
-
-# Enable model quantization for memory optimization
-# GPU: 8-bit quantization with automatic device mapping (~50% memory reduction)
-# CPU: FP16 precision with low memory usage (~40% smaller, 15-400% faster)
-ENABLE_MODEL_QUANTIZATION = os.getenv("ENABLE_MODEL_QUANTIZATION", "true").lower() == "true"
-
-# --- Hardware Configuration ---
-# The device to run local models on.
-# Options: 'auto', 'cuda', 'cpu'
-# 'auto' will use a CUDA-enabled GPU if available, otherwise fallback to CPU.
-DEVICE = os.getenv("DEVICE", "auto")
-
 # The number of initial candidates to retrieve from the vector store.
 # Increased for better recall and parallel processing efficiency
 INITIAL_RETRIEVAL_K = 50
 
-# The number of top-scoring chunks from hybrid search to send to the reranker.
+# The number of top-scoring chunks from hybrid search to select
 # Increased to provide more context while maintaining quality
-PRE_RERANKER_TOP_K = 15
+INITIAL_SELECTION_K = 15
 
 # The final number of top-ranked documents to pass to the synthesis agent.
-RERANKER_TOP_K = 4
+FINAL_SELECTION_K = 4
 
 
 # --- Hybrid Search Relevance ---
@@ -64,7 +44,7 @@ RERANKER_TOP_K = 4
 RELEVANCE_THRESHOLD = 0.85
 
 # Minimum score threshold for individual chunks (filters out very low quality chunks)
-# Chunks with scores below this threshold are discarded before reranking or synthesis
+# Chunks with scores below this threshold are discarded before synthesis
 MIN_CHUNK_SCORE = 0.7
 
 
@@ -91,10 +71,10 @@ EMBEDDING_MAX_RETRIES = 5
 # Base delay for embedding retry in seconds (will be exponentially increased)
 EMBEDDING_RETRY_BASE_DELAY = 2.0
 
-# Document processing chunk sizes (optimized for reranker context window)
+# Document processing chunk sizes (optimized for context and performance)
 PARENT_CHUNK_SIZE = 3000
 PARENT_CHUNK_OVERLAP = 200
-CHILD_CHUNK_SIZE = 1000  # Stays within the 512 token limit of most rerankers
+CHILD_CHUNK_SIZE = 1000  # Optimal size for hybrid search and retrieval
 CHILD_CHUNK_OVERLAP = 100
 
 

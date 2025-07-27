@@ -13,9 +13,8 @@ A state-of-the-art multi-agent Retrieval-Augmented Generation system built with 
 ### **Advanced RAG Pipeline**
 - **HyDE Query Expansion**: Hypothetical Document Embeddings for better retrieval
 - **Hybrid Search**: Vector + BM25 search using Weaviate's native capabilities  
-- **LLM as a Judge Re-ranking**: Precision scoring with `gemini-1.5-flash`
 - **Parent-Child Chunking**: Precise retrieval with rich context
-- **Quality-Based Routing**: Intelligent fallback based on relevance scores from the LLM Judge
+- **Quality-Based Routing**: Intelligent fallback based on retrieval scores
 
 ### **Intelligent Multi-Agent Orchestration**
 - **Intent Classification**: Fast routing using Gemini 1.5 Flash
@@ -139,38 +138,28 @@ docker-compose up -d
 docker-compose ps
 ```
 
-#### GPU Support (NVIDIA)
-First, install the NVIDIA Container Toolkit:
+## 🔮 Future GPU Enhancement
 
-```bash
-# Configure NVIDIA repository
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+**Transformer Reranking Implementation Roadmap**
 
-# Install toolkit
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
+If you have access to a GPU with **at least 8GB of VRAM**, we can implement an advanced transformer-based reranking system using models like `Qwen/Qwen3-Reranker-0.6B` or similar cross-encoder architectures. This would provide:
 
-# Configure Docker
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-```
+- **Enhanced Precision**: Fine-grained relevance scoring between query-document pairs
+- **Domain Adaptation**: Potential for fine-tuning on academic literature
+- **Quality Boost**: Improved retrieval quality over hybrid search alone
 
-Then run with GPU support:
-```bash
-# Start with GPU acceleration
-docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
-```
+**Implementation would include:**
+- GPU-optimized model loading with 8-bit quantization
+- Batch processing for efficiency
+- Fallback to current hybrid search approach for compatibility
+- Configuration-driven enable/disable functionality
 
-**Note on GPU Memory:** The GPU configuration is optimized for memory efficiency. Local models (rerankers) run on CPU with FP16 quantization (40% smaller, 15-400% faster) to avoid VRAM exhaustion, while GPU acceleration is available for other components. For GPUs with >8GB VRAM, you can enable full GPU acceleration by setting `DEVICE=auto` in your environment.
+**Technical Requirements:**
+- NVIDIA GPU with 8GB+ VRAM
+- CUDA toolkit and container runtime
+- Additional dependencies: `transformers`, `torch`, `accelerate`, `bitsandbytes`
 
-**Memory Optimizations Applied:**
-- **Correct Model**: Uses `Qwen/Qwen3-Reranker-0.6B` with direct transformers approach
-- **GPU Quantization**: 8-bit quantization with `load_in_8bit=True` and automatic device mapping
-- **CPU FP16 Precision**: Reduces memory usage by ~50% with `torch_dtype=torch.float16`
-- **Advanced Architecture**: Direct `AutoModelForCausalLM` usage instead of sentence-transformers
-- **Proper Instruction Format**: Qwen3-specific system/user/assistant prompt formatting
-- **Token-Based Scoring**: Uses "yes"/"no" token logits for precise relevance scoring
+This enhancement remains on our roadmap pending hardware availability.
 
 The system will be available at:
 - **API**: http://localhost:8000

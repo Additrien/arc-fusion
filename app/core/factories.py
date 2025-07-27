@@ -12,8 +12,7 @@ from app.core.config.services import (
     DocumentProcessingConfig,
     EmbeddingConfig,
     VectorStoreConfig,
-    SessionConfig,
-    RerankerConfig
+    SessionConfig
 )
 from app.core.document.pdf_extractor import PDFExtractor
 from app.core.document.chunking_service import ChunkingService
@@ -39,7 +38,6 @@ class ServiceFactory:
         self.embedding_config = EmbeddingConfig()
         self.vector_config = VectorStoreConfig()
         self.session_config = SessionConfig()
-        self.reranker_config = RerankerConfig()
         
         logger.info("Service factory initialized with configurations")
     
