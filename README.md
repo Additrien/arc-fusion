@@ -980,6 +980,11 @@ With the introduction of the PlannerAgent, the system now implements a foundatio
 4. **Multi-modal Support**: PDF + image + table understanding
 5. **Full ReAct Implementation**: Iterative planning and execution based on intermediate results
 
+### **Other Future Improvements**
+- Unit testing and mocking for agents and services
+- Improved management of LLM errors (automatic retries, fallback strategies)
+- Better management of API quotas and rate limiting
+
 ## 🏆 Technical Highlights
 
 This implementation demonstrates:
