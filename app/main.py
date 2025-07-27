@@ -314,10 +314,20 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
 async def get_document_status(document_id: str):
     """Get the processing status of a specific document."""
     if document_id not in document_processing_status:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document {document_id} not found or never existed"
-        )
+        # If not in memory, check if it exists in the persistent vector store
+        exists_in_db = await vector_store.document_exists(document_id)
+        if exists_in_db:
+            # If it exists in the DB, it means it was successfully processed
+            return DocumentStatusResponse(
+                status="completed",
+                filename="N/A (retrieved from database)",
+                progress="Completed"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document {document_id} not found or never existed"
+            )
     
     status_info = document_processing_status[document_id].copy()
     

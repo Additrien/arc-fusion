@@ -377,6 +377,25 @@ class VectorStore:
                 return None
         
         return await asyncio.get_event_loop().run_in_executor(self.executor, _get_parent_sync)
+
+    async def document_exists(self, document_id: str) -> bool:
+        """Check if a document with the given ID exists in the database."""
+        await self._ensure_connected()
+
+        def _check_exists_sync():
+            try:
+                collection = self.client.collections.get(self.collection_name)
+                
+                response = collection.query.fetch_objects(
+                    filters=wvc.query.Filter.by_property("document_id").equal(document_id),
+                    limit=1
+                )
+                
+                return len(response.objects) > 0
+            except Exception:
+                return False
+
+        return await asyncio.get_event_loop().run_in_executor(self.executor, _check_exists_sync)
     
     async def get_all_documents(self) -> List[Dict[str, Any]]:
         """Get all unique documents in the database."""
