@@ -53,9 +53,7 @@ graph TD
     D -->|"both tasks"| PE["Parallel Executor<br/>⚡ Concurrent Processing"]
     D -->|"clarification"| G["Clarification Agent"]
     
-    PE --> E2["`**Parallel Processing**
-    🔄 Corpus Retrieval
-    🌐 Web Search`"]
+    PE --> E2["Parallel Processing<br/>⚡ Corpus Retrieval<br/>⚡ Web Search"]
     E2 --> H["Synthesis Agent<br/>(Gemini 2.5 Flash/Pro)"]
     
     E --> E1["1. HyDE Query Expansion<br/>(Gemini 2.5 Flash Lite)"]
@@ -479,15 +477,107 @@ GET /api/v1/agents/info
 
 The extensible architecture enables easy addition of:
 
-### **Agnostic LLM Provider System**
+### **🚀 Quick Wins (1-2 Days Implementation)**
+
+**Response Caching System**
+```python
+@AgentRegistry.register("cache", ["response_caching"])
+def cache_agent(state: GraphState) -> GraphState:
+    # Simple in-memory cache for repeated queries
+    cache_key = f"{state['query']}:{state['session_id']}"
+    if cached_response := response_cache.get(cache_key):
+        return cached_response
+    return state
+```
+- **Effort**: 4-6 hours
+- **Impact**: 80% faster responses for repeated queries
+- **Implementation**: Simple dictionary cache with TTL
+
+**Enhanced Prompt Engineering**
+- **Current**: Generic prompts for all agents
+- **Quick Win**: Add few-shot examples to improve consistency
+- **Effort**: 2-4 hours per agent
+- **Impact**: 15-20% better response quality
+
+**Configuration Exposure**
+```python
+# Expose more tuning parameters via environment variables
+RETRIEVAL_THRESHOLD = float(os.getenv("RETRIEVAL_THRESHOLD", 0.7))
+MAX_CONTEXT_CHUNKS = int(os.getenv("MAX_CONTEXT_CHUNKS", 4))
+SYNTHESIS_TEMPERATURE = float(os.getenv("SYNTHESIS_TEMPERATURE", 0.1))
+```
+- **Effort**: 2-3 hours
+- **Impact**: Runtime tuning without code changes
+
+**Basic Request Analytics**
+```python
+@AgentRegistry.register("analytics", ["request_tracking"])
+def analytics_agent(state: GraphState) -> GraphState:
+    # Simple logging for request patterns
+    logger.info("query_analytics", extra={
+        "query_length": len(state["query"]),
+        "intent": state.get("intent"),
+        "processing_time": state.get("processing_time"),
+        "agent_path": state.get("agent_path")
+    })
+    return state
+```
+- **Effort**: 3-4 hours
+- **Impact**: Immediate insights into usage patterns
+
+**Citation Formatting Enhancement**
+- **Current**: Basic citation objects
+- **Quick Win**: Rich markdown formatting with page numbers
+- **Effort**: 4-6 hours
+- **Impact**: More professional, academic-style citations
+
+### **⚡ Medium Effort (3-7 Days)**
+
+**Confidence Scoring Agent**
+```python
+@AgentRegistry.register("confidence", ["uncertainty_quantification"])
+def confidence_agent(state: GraphState) -> GraphState:
+    # Calculate confidence based on multiple factors
+    retrieval_confidence = state.get("best_retrieval_score", 0.0)
+    source_count = len(state.get("document_sources", []))
+    answer_length = len(state.get("final_answer", ""))
+    
+    confidence = (retrieval_confidence * 0.5 + 
+                 min(source_count/3, 1.0) * 0.3 + 
+                 min(answer_length/500, 1.0) * 0.2)
+    
+    state["answer_confidence"] = confidence
+    return state
+```
+
+**Session Persistence with Redis**
+- Move from in-memory sessions to Redis
+- Enable horizontal scaling
+- Session data survives container restarts
+
+**Query Preprocessing Agent**
+```python
+@AgentRegistry.register("preprocessor", ["query_normalization"])
+def preprocessing_agent(state: GraphState) -> GraphState:
+    query = state["query"]
+    # Clean and normalize query
+    cleaned_query = re.sub(r'\s+', ' ', query.strip())
+    # Fix common typos, expand abbreviations
+    state["query"] = cleaned_query
+    return state
+```
+
+### **🔧 Advanced Features (2+ Weeks)**
+
+**Agnostic LLM Provider System**
 
 **Multi-Provider Support Implementation**
 
 Currently, the system is tightly coupled to Google's Gemini API. A future enhancement would implement an agnostic LLM provider system that allows seamless switching between different providers:
 
 **Supported Providers:**
-- **OpenAI**: GPT-4, GPT-3.5-turbo with structured outputs
-- **Anthropic**: Claude 3.5 Sonnet/Haiku for enhanced reasoning
+- **OpenAI**: GPT-4.1, GPT-4.1 nano, GPT-4o, GPT-4o mini
+- **Anthropic**: Claude 3.5 / 3.7 / 4
 - **Google Gemini**: Current implementation (Flash/Pro models)
 - **OpenRouter**: Access to multiple models through unified API
 - **Local Models**: Ollama integration for on-premise deployment
