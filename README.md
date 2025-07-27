@@ -44,34 +44,25 @@ Our current system uses an **"LLM as a Judge"** architecture for document releva
 graph TD
     A["User Query"] --> B["Routing Agent<br/>(Gemini 2.5 Flash Lite)"]
     B --> C{"Intent Classification"}
-    
     C -->|"Any Intent"| P["Planner Agent<br/>(Gemini 2.5 Flash Lite)"]
     P --> D{"Dynamic Plan"}
-    
     D -->|"corpus_retrieval only"| E["Corpus Retrieval Agent"]
     D -->|"web_search only"| F["Web Search Agent"] 
     D -->|"both tasks"| PE["Parallel Executor<br/>⚡ Concurrent Processing"]
     D -->|"clarification"| G["Clarification Agent"]
-    
     PE --> E2["Parallel Processing<br/>⚡ Corpus Retrieval<br/>⚡ Web Search"]
     E2 --> H["Synthesis Agent<br/>(Gemini 2.5 Flash/Pro)"]
-    
     E --> E1["1. HyDE Query Expansion<br/>(Gemini 2.5 Flash Lite)"]
     E1 --> E3["2. Hybrid Search<br/>(Weaviate: Vector + BM25)"]
     E3 --> E4["3. LLM as a Judge<br/>(Gemini 2.5 Flash)"]
     E4 --> E5{"Quality Assessment<br/>Best Score ≥ 7.0?"}
-    
     E5 -->|"High Quality"| H
     E5 -->|"Low Quality"| F
-    
     F --> F1["Query Optimization<br/>(Gemini 2.5 Flash Lite)"]
     F1 --> F2["Tavily API Search"]
     F2 --> H
-    
     G --> I["Clarification Response"]
-    
     H --> J["Final Answer<br/>with Citations"]
-    
     style E fill:#e1f5fe
     style E4 fill:#f3e5f5
     style E5 fill:#fff3e0
