@@ -364,7 +364,6 @@ Our architecture prioritizes **long-term extensibility** over short-term simplic
 #### **✅ Benefits of Our Approach**
 
 **1. Agent Registry Pattern**
-- **Decision**: Use decorator-based agent registration vs. hardcoded agent list
 - **Benefit**: New agents can be added without modifying core framework code
 - **Trade-off**: Additional complexity and indirection vs. simple function calls
 
