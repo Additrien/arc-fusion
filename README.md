@@ -46,23 +46,34 @@ graph TD
     B --> C{"Intent Classification"}
     C -->|"Any Intent"| P["Planner Agent<br/>(Gemini 2.5 Flash Lite)"]
     P --> D{"Dynamic Plan"}
-    D -->|"corpus_retrieval only"| E["Corpus Retrieval Agent"]
+    D -->|"corpus_retrieval only"| E(Corpus Retrieval Agent)
     D -->|"web_search only"| F["Web Search Agent"] 
     D -->|"both tasks"| PE["Parallel Executor<br/>⚡ Concurrent Processing"]
     D -->|"clarification"| G["Clarification Agent"]
+    
     PE --> E2["Parallel Processing<br/>⚡ Corpus Retrieval<br/>⚡ Web Search"]
     E2 --> H["Synthesis Agent<br/>(Gemini 2.5 Flash/Pro)"]
-    E --> E1["1. HyDE Query Expansion<br/>(Gemini 2.5 Flash Lite)"]
-    E1 --> E3["2. Hybrid Search<br/>(Weaviate: Vector + BM25)"]
-    E3 --> E4["3. LLM as a Judge<br/>(Gemini 2.5 Flash)"]
-    E4 --> E5{"Quality Assessment<br/>Best Score ≥ 7.0?"}
+    
+    subgraph E [Corpus Retrieval]
+        E1["HyDE Query Expansion<br/>(Gemini 2.5 Flash Lite)"]
+        E3["Hybrid Search<br/>(Weaviate: Vector + BM25)"]
+        E4["LLM as a Judge<br/>(Gemini 2.5 Flash)"]
+        E5{"Quality Assessment<br/>Best Score ≥ 7.0?"}
+    end
+
+    E --> E1 --> E3 --> E4 --> E5
+    
     E5 -->|"High Quality"| H
     E5 -->|"Low Quality"| F
+    
     F --> F1["Query Optimization<br/>(Gemini 2.5 Flash Lite)"]
     F1 --> F2["Tavily API Search"]
     F2 --> H
+    
     G --> I["Clarification Response"]
+    
     H --> J["Final Answer<br/>with Citations"]
+    
     style E fill:#e1f5fe
     style E4 fill:#f3e5f5
     style E5 fill:#fff3e0
@@ -930,3 +941,24 @@ MIT License - See LICENSE file for details.
 ---
 
 **Built with ❤️ for the future of AI-powered research assistants.**
+
+</file_content>
+
+Now that you have the latest state of the file, try the operation again with fewer, more precise SEARCH blocks. For large files especially, it may be prudent to try to limit yourself to <5 SEARCH/REPLACE blocks at a time, then wait for the user to respond with the result of the operation before following up with another replace_in_file call to make additional edits.
+(If you run into this error 3 times in a row, you may use the write_to_file tool as a fallback.)
+</error><environment_details>
+# VSCode Visible Files
+README.md
+
+# VSCode Open Tabs
+README.md
+
+# Current Time
+7/27/2025, 2:59:15 PM (Europe/Paris, UTC+2:00)
+
+# Context Window Usage
+87,688 / 1,048.576K tokens used (8%)
+
+# Current Mode
+ACT MODE
+</environment_details>
