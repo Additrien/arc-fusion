@@ -35,6 +35,10 @@ class AgentService:
         self._graph_built = False
         self.sessions: Dict[str, Dict[str, Any]] = {}  # Fallback for when no session_manager is provided
         
+        # Simple in-memory query cache for performance optimization
+        self.query_cache: Dict[str, Dict[str, Any]] = {}
+        self.max_cache_size = 100  # Keep cache size reasonable
+        
         # Initialize the framework
         self._initialize_framework()
     
@@ -74,6 +78,13 @@ class AgentService:
         if not session_id:
             session_id = str(uuid.uuid4())
         
+        # Check cache first for exact matches (performance optimization)
+        cached_response = self._get_cached_response(query)
+        if cached_response:
+            logger.info(f"Cache hit for query: {query[:50]}...")
+            cached_response["session_id"] = session_id  # Update session ID
+            return cached_response
+        
         start_time = time.time()
         
         try:
@@ -96,6 +107,10 @@ class AgentService:
             
             # Format response
             response = self._format_response(final_state, processing_time)
+            
+            # Cache the response for future use (if successful)
+            if response.get("success", False):
+                self._cache_response(query, response)
             
             logger.info(f"Query processed successfully in {processing_time:.2f}s for session {session_id}")
             
@@ -276,6 +291,45 @@ class AgentService:
                 "best_retrieval_score": final_state.get("best_retrieval_score", 0.0)
             }
         }
+    
+    def _get_cached_response(self, query: str) -> Optional[Dict[str, Any]]:
+        """
+        Get cached response for a query.
+        
+        Args:
+            query: User query to check cache for
+            
+        Returns:
+            Cached response if found, None otherwise
+        """
+        # Simple exact match for now
+        normalized_query = query.strip().lower()
+        return self.query_cache.get(normalized_query)
+    
+    def _cache_response(self, query: str, response: Dict[str, Any]):
+        """
+        Cache a response for future use.
+        
+        Args:
+            query: User query
+            response: Response to cache
+        """
+        # Manage cache size - remove oldest entries if needed
+        if len(self.query_cache) >= self.max_cache_size:
+            # Simple FIFO eviction - remove oldest entry
+            oldest_key = next(iter(self.query_cache))
+            del self.query_cache[oldest_key]
+            logger.debug(f"Cache eviction: removed entry for '{oldest_key[:30]}...'")
+        
+        # Store normalized query as key and copy response (excluding session_id)
+        normalized_query = query.strip().lower()
+        cached_response = response.copy()
+        # Remove session-specific data from cache
+        if "session_id" in cached_response:
+            del cached_response["session_id"]
+        
+        self.query_cache[normalized_query] = cached_response
+        logger.debug(f"Cached response for query: '{query[:30]}...'")
 
 
 # Global agent service instance (for backward compatibility)

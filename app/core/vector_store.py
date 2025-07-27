@@ -18,7 +18,11 @@ class VectorStore:
         self.collection_name = self.config.collection_name
         self.parent_collection_name = self.config.parent_collection_name
         self.client = None
-        self.executor = ThreadPoolExecutor(max_workers=4)
+        
+        # Dynamic worker pool sizing - use half of available CPU cores
+        cpu_count = os.cpu_count() or 4
+        max_workers = max(2, cpu_count // 2)
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self._connected = False
     
     async def _ensure_connected(self):
@@ -627,4 +631,4 @@ class VectorStore:
         """Close Weaviate connection."""
         if self.client:
             self.client.close()
-        self.executor.shutdown(wait=True) 
+        self.executor.shutdown(wait=True)

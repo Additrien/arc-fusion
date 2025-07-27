@@ -47,12 +47,12 @@ ENABLE_MODEL_QUANTIZATION = os.getenv("ENABLE_MODEL_QUANTIZATION", "true").lower
 DEVICE = os.getenv("DEVICE", "auto")
 
 # The number of initial candidates to retrieve from the vector store.
-# Reduced for speed - still good coverage with hybrid search
-INITIAL_RETRIEVAL_K = 20
+# Increased for better recall and parallel processing efficiency
+INITIAL_RETRIEVAL_K = 50
 
 # The number of top-scoring chunks from hybrid search to send to the reranker.
-# This reduces GPU load by filtering out lower-quality chunks before reranking.
-PRE_RERANKER_TOP_K = 8
+# Increased to provide more context while maintaining quality
+PRE_RERANKER_TOP_K = 15
 
 # The final number of top-ranked documents to pass to the synthesis agent.
 RERANKER_TOP_K = 4
@@ -79,11 +79,11 @@ WEB_SEARCH_QUERY_MODEL = PRIMARY_MODEL
 
 
 # --- Document Processing & Storage ---
-# Batch size for storing chunks in Weaviate (smaller batches reduce connection timeouts)
-WEAVIATE_BATCH_SIZE = 50
+# Batch size for storing chunks in Weaviate (larger batches for better performance)
+WEAVIATE_BATCH_SIZE = 200
 
 # Delay between batches to avoid overwhelming connections (seconds)
-BATCH_DELAY_SECONDS = 0.1
+BATCH_DELAY_SECONDS = 0.0  # Removed artificial delay for performance
 
 # Maximum retries for embedding generation with exponential backoff
 EMBEDDING_MAX_RETRIES = 5
@@ -106,10 +106,10 @@ CHILD_CHUNK_OVERLAP = 100
 # - 1 million tokens per day
 
 # Delay between embedding requests to stay under rate limits (seconds)
-EMBEDDING_REQUEST_DELAY = 4.0  # 15 requests/minute = 1 request per 4 seconds
+EMBEDDING_REQUEST_DELAY = 0.1  # Optimized for performance - only small delay for API stability
 
 # Maximum concurrent embedding requests
-MAX_CONCURRENT_EMBEDDINGS = 1  # Free tier is quite restrictive
+MAX_CONCURRENT_EMBEDDINGS = 3  # Increased for better throughput
 
 # Disable rate limiting for speed (use with caution on production)
 ENABLE_RATE_LIMITING = False

@@ -7,6 +7,7 @@ graph construction, and execution orchestration using LangGraph.
 
 from typing import Dict, Any, Optional, List
 import logging
+import asyncio
 from langgraph.graph import StateGraph, END
 
 from .registry import AgentRegistry
@@ -63,6 +64,9 @@ class AgentFramework:
 
         # Add the planner node that manages the task list
         graph.add_node("planner", self.planner_node)
+        
+        # Add the parallel executor node for concurrent task execution
+        graph.add_node("parallel_executor", self.parallel_executor_node)
 
         # Set entry point (must have a routing agent)
         if 'routing' not in agents:
@@ -102,6 +106,7 @@ class AgentFramework:
                 **({synthesis_agent: synthesis_agent} if synthesis_agent else {}),
                 **({clarification_agent: clarification_agent} if clarification_agent else {}),
                 **({planner_agent: planner_agent} if planner_agent else {}),
+                "parallel_executor": "parallel_executor",  # Add parallel executor
                 END: END
             }
         )
@@ -111,6 +116,9 @@ class AgentFramework:
             graph.add_edge(retrieval_agent, 'planner')
         if web_agent:
             graph.add_edge(web_agent, 'planner')
+        
+        # 4. Parallel executor also loops back to planner after completion
+        graph.add_edge('parallel_executor', 'planner')
 
         # 4. The synthesis agent is the final step before ending.
         if synthesis_agent:
@@ -212,16 +220,35 @@ class AgentFramework:
         tasks_to_run = state.get('tasks_to_run', [])
         tasks_completed = state.get('tasks_completed', [])
 
-        # Find the next task that hasn't been completed.
-        for task in tasks_to_run:
-            if task not in tasks_completed:
-                next_agent = self._get_agent_for_capability_or_name(task)
-                if next_agent != END:
-                    logger.info(f"Routing logic determined next agent: {next_agent}")
-                    state['agent_path'].append(next_agent)
-                    return next_agent
-                else:
-                    break # Agent not found, end the process.
+        # Check for parallel execution opportunity (corpus_retrieval + web_search)
+        remaining_tasks = [task for task in tasks_to_run if task not in tasks_completed]
+        
+        if self._can_execute_in_parallel(remaining_tasks):
+            logger.info("Detected parallel execution opportunity for corpus_retrieval and web_search")
+            # Execute parallel tasks and mark as special state
+            state['parallel_execution'] = True
+            state['parallel_tasks'] = ['corpus_retrieval', 'web_search']
+            
+            # Add both agents to path for tracking
+            retrieval_agent = self._get_agent_for_capability("document_search")
+            web_agent = self._get_agent_for_capability("web_search")
+            if retrieval_agent:
+                state['agent_path'].append(f"{retrieval_agent}(parallel)")
+            if web_agent:
+                state['agent_path'].append(f"{web_agent}(parallel)")
+            
+            # Route to parallel execution node
+            return "parallel_executor"
+
+        # Find the next task that hasn't been completed (sequential execution).
+        for task in remaining_tasks:
+            next_agent = self._get_agent_for_capability_or_name(task)
+            if next_agent != END:
+                logger.info(f"Routing logic determined next agent: {next_agent}")
+                state['agent_path'].append(next_agent)
+                return next_agent
+            else:
+                break # Agent not found, end the process.
 
         # If all tasks are completed, decide whether to synthesize or end.
         has_context = state.get('retrieved_context') or state.get('web_context')
@@ -348,6 +375,181 @@ class AgentFramework:
                 "final_answer": "I apologize, but I encountered an error processing your request. Please try again."
             }
     
+    def _can_execute_in_parallel(self, remaining_tasks: List[str]) -> bool:
+        """
+        Check if the remaining tasks can be executed in parallel.
+        
+        Currently supports parallel execution of corpus_retrieval and web_search.
+        
+        Args:
+            remaining_tasks: List of tasks that haven't been completed yet
+            
+        Returns:
+            True if tasks can be executed in parallel, False otherwise
+        """
+        # Check if both corpus_retrieval and web_search are in remaining tasks
+        has_corpus = 'corpus_retrieval' in remaining_tasks
+        has_web = 'web_search' in remaining_tasks
+        
+        # Only execute in parallel if both tasks are present and we have the required agents
+        if has_corpus and has_web:
+            retrieval_agent = self._get_agent_for_capability("document_search")
+            web_agent = self._get_agent_for_capability("web_search")
+            return retrieval_agent is not None and web_agent is not None
+        
+        return False
+    
+    async def parallel_executor_node(self, state: GraphState) -> Dict[str, Any]:
+        """
+        Execute corpus retrieval and web search in parallel for improved performance.
+        
+        Args:
+            state: Current graph state
+            
+        Returns:
+            Updated state with results from both parallel tasks
+        """
+        logger.info("Starting parallel execution of corpus_retrieval and web_search")
+        
+        # Get agent functions
+        retrieval_agent_func = AgentRegistry.get_agent_function(
+            self._get_agent_for_capability("document_search")
+        )
+        web_agent_func = AgentRegistry.get_agent_function(
+            self._get_agent_for_capability("web_search")
+        )
+        
+        if not retrieval_agent_func or not web_agent_func:
+            logger.error("Missing agent functions for parallel execution")
+            # Fall back to marking tasks as completed to avoid infinite loop
+            tasks_completed = state.get('tasks_completed', [])
+            return {
+                "tasks_completed": tasks_completed + ['corpus_retrieval', 'web_search'],
+                "error_info": {
+                    "error_type": "ParallelExecutionError",
+                    "error_message": "Missing agent functions for parallel execution"
+                }
+            }
+        
+        try:
+            # Create separate state copies for each agent to avoid interference
+            retrieval_state = state.copy()
+            web_state = state.copy()
+            
+            # Create async tasks for parallel execution
+            retrieval_task = asyncio.create_task(
+                self._run_agent_async(retrieval_agent_func, retrieval_state)
+            )
+            web_task = asyncio.create_task(
+                self._run_agent_async(web_agent_func, web_state)
+            )
+            
+            # Wait for both tasks to complete
+            retrieval_result, web_result = await asyncio.gather(
+                retrieval_task, web_task, return_exceptions=True
+            )
+            
+            # Merge results from both agents
+            merged_state = self._merge_parallel_results(
+                state, retrieval_result, web_result
+            )
+            
+            # Mark both tasks as completed
+            tasks_completed = merged_state.get('tasks_completed', [])
+            if 'corpus_retrieval' not in tasks_completed:
+                tasks_completed.append('corpus_retrieval')
+            if 'web_search' not in tasks_completed:
+                tasks_completed.append('web_search')
+            
+            merged_state['tasks_completed'] = tasks_completed
+            merged_state['parallel_execution'] = False  # Reset flag
+            
+            logger.info("Parallel execution completed successfully")
+            return merged_state
+            
+        except Exception as e:
+            logger.error(f"Error during parallel execution: {str(e)}")
+            # Mark tasks as completed to avoid infinite loop, but note the error
+            tasks_completed = state.get('tasks_completed', [])
+            return {
+                "tasks_completed": tasks_completed + ['corpus_retrieval', 'web_search'],
+                "error_info": {
+                    "error_type": "ParallelExecutionError",
+                    "error_message": str(e)
+                }
+            }
+    
+    async def _run_agent_async(self, agent_func: AgentFunction, state: GraphState) -> Dict[str, Any]:
+        """
+        Run an agent function asynchronously.
+        
+        Args:
+            agent_func: Agent function to execute
+            state: State to pass to the agent
+            
+        Returns:
+            Updated state from the agent
+        """
+        # Check if agent function is async
+        if asyncio.iscoroutinefunction(agent_func):
+            return await agent_func(state)
+        else:
+            # Run sync function in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, agent_func, state)
+    
+    def _merge_parallel_results(self, original_state: GraphState, 
+                               retrieval_result: Any, web_result: Any) -> Dict[str, Any]:
+        """
+        Merge results from parallel execution of retrieval and web search agents.
+        
+        Args:
+            original_state: Original state before parallel execution
+            retrieval_result: Result from corpus retrieval agent
+            web_result: Result from web search agent
+            
+        Returns:
+            Merged state with combined results
+        """
+        merged_state = original_state.copy()
+        
+        # Handle retrieval results
+        if isinstance(retrieval_result, Exception):
+            logger.error(f"Corpus retrieval failed: {str(retrieval_result)}")
+            merged_state['error_info'] = merged_state.get('error_info', {})
+            merged_state['error_info']['corpus_retrieval_error'] = str(retrieval_result)
+        elif isinstance(retrieval_result, dict):
+            # Merge retrieval context and sources
+            if 'retrieved_context' in retrieval_result:
+                merged_state['retrieved_context'] = retrieval_result['retrieved_context']
+            if 'document_sources' in retrieval_result:
+                merged_state['document_sources'] = retrieval_result['document_sources']
+            if 'best_retrieval_score' in retrieval_result:
+                merged_state['best_retrieval_score'] = retrieval_result['best_retrieval_score']
+        
+        # Handle web search results
+        if isinstance(web_result, Exception):
+            logger.error(f"Web search failed: {str(web_result)}")
+            merged_state['error_info'] = merged_state.get('error_info', {})
+            merged_state['error_info']['web_search_error'] = str(web_result)
+        elif isinstance(web_result, dict):
+            # Merge web context and sources
+            if 'web_context' in web_result:
+                merged_state['web_context'] = web_result['web_context']
+            if 'web_sources' in web_result:
+                merged_state['web_sources'] = web_result['web_sources']
+        
+        # Combine observations from both agents
+        observations = merged_state.get('observations', [])
+        if isinstance(retrieval_result, dict) and 'observations' in retrieval_result:
+            observations.extend(retrieval_result['observations'])
+        if isinstance(web_result, dict) and 'observations' in web_result:
+            observations.extend(web_result['observations'])
+        merged_state['observations'] = observations
+        
+        logger.info("Parallel results merged successfully")
+        return merged_state
+
     def get_agent_info(self) -> Dict[str, Any]:
         """Get information about registered agents and capabilities."""
         return {
