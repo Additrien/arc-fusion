@@ -17,41 +17,24 @@ A state-of-the-art multi-agent Retrieval-Augmented Generation system built with 
 - **Quality-Based Routing**: Intelligent fallback based on retrieval scores
 
 ### **Intelligent Multi-Agent Orchestration**
-- **Intent Classification**: Fast routing using Gemini 1.5 Flash
+- **Intent Classification**: Fast routing using Gemini 2.5 Flash Lite
 - **LLM-Based Planning**: Dynamic agent execution planning using Gemini 2.5 Flash Lite
 - **Corpus Retrieval**: Advanced RAG with academic paper understanding
 - **Automatic Fallback**: When no corpus results found → auto-route to web search
 - **Web Search**: Current information via Tavily API (explicit requests OR automatic fallback)
-- **Response Synthesis**: High-quality answers using Gemini 1.5 Pro
+- **Response Synthesis**: High-quality answers using Gemini 2.5 Flash and Gemini 2.5 Pro
 
-## ⚖️ Architectural Decision: LLM as a Judge vs. Cross-Encoder
+## 🧠 Current Architecture: LLM as a Judge
 
-After a thorough analysis, we have strategically pivoted from using a Cross-Encoder for re-ranking to a more powerful **"LLM as a Judge"** architecture. While the Cross-Encoder is a standard component in many RAG pipelines, it presents critical limitations in our specific use case.
+Our current system uses an **"LLM as a Judge"** architecture for document relevance assessment, leveraging Gemini 2.5 Flash to evaluate the quality of retrieved documents and make intelligent routing decisions.
 
-### Why We Are NOT Using a Cross-Encoder
+### Key Advantages of Our Current Approach
 
-1.  **Domain Mismatch & Fine-Tuning Risk:**
-    *   **Problem:** Pre-trained cross-encoders (like `ms-marco-MiniLM-L6-v2`) are specialized for general web search data, not academic research papers. Their notion of "relevance" is misaligned with our domain.
-    *   **Risk:** Fine-tuning a model on our small, evolving dataset carries a high risk of **overfitting**. The model might learn the specifics of our current PDFs but fail to generalize to new documents, making the system brittle.
-
-2.  **Critical Context Truncation:**
-    *   **Problem:** Cross-encoders have a very small context window (typically 512 tokens). Our document chunks are larger to provide rich context for synthesis.
-    *   **Consequence:** The cross-encoder **truncates the input**, potentially ignoring crucial information located at the end of a chunk. This is unacceptable for a component whose sole purpose is precision.
-
-3.  **Lack of Holistic Understanding:**
-    *   **Problem:** A cross-encoder scores each document in isolation. It cannot detect redundancy, complementarity, or contradictions between different retrieved passages.
-
-### The "LLM as a Judge" Advantage
-
-Our new architecture replaces the re-ranking step with a dedicated agent that uses a powerful LLM (Gemini 1.5 Flash) to assess the relevance of the retrieved documents.
-
-**Key Advantages:**
--   **Massive Context Window:** The LLM can analyze all retrieved chunks simultaneously (up to 1 million tokens), completely eliminating the truncation issue and enabling a holistic, context-aware judgment.
--   **Zero-Shot Reasoning:** We leverage the LLM's powerful, built-in reasoning capabilities, which are far more generalizable than a fine-tuned model on a small dataset. It can assess relevance for any academic domain without retraining.
--   **Rich, Structured Output:** Instead of a single score, the LLM Judge provides a structured JSON output with a relevance score, a textual explanation, and a clear routing decision (`synthesize` or `search_web`), leading to more reliable and transparent workflows.
--   **Simplified & More Robust Pipeline:** This approach simplifies our architecture (no need to manage a specialized model) and makes it more robust to changes in the underlying data corpus.
-
-For a detailed breakdown of this architectural pivot, please see [`architecture_change.md`](./architecture_change.md).
+**LLM Judge Benefits:**
+-   **Massive Context Window:** The LLM can analyze all retrieved chunks simultaneously (up to 1 million tokens), enabling holistic, context-aware judgment of document relevance.
+-   **Zero-Shot Reasoning:** We leverage the LLM's powerful, built-in reasoning capabilities for any academic domain without requiring additional training.
+-   **Rich, Structured Output:** Instead of a single score, the LLM Judge provides structured JSON output with relevance scores, explanations, and clear routing decisions (`synthesize` or `search_web`).
+-   **Simplified Pipeline:** This approach simplifies our architecture and makes it robust to changes in the underlying data corpus.
 
 ---
 
@@ -59,25 +42,31 @@ For a detailed breakdown of this architectural pivot, please see [`architecture_
 
 ```mermaid
 graph TD
-    A["User Query"] --> B["Routing Agent<br/>(Gemini 1.5 Flash)"]
+    A["User Query"] --> B["Routing Agent<br/>(Gemini 2.5 Flash Lite)"]
     B --> C{"Intent Classification"}
     
     C -->|"Any Intent"| P["Planner Agent<br/>(Gemini 2.5 Flash Lite)"]
     P --> D{"Dynamic Plan"}
     
-    D -->|"corpus_retrieval"| E["Corpus Retrieval Agent"]
-    D -->|"web_search"| F["Web Search Agent"]
+    D -->|"corpus_retrieval only"| E["Corpus Retrieval Agent"]
+    D -->|"web_search only"| F["Web Search Agent"] 
+    D -->|"both tasks"| PE["Parallel Executor<br/>⚡ Concurrent Processing"]
     D -->|"clarification"| G["Clarification Agent"]
     
-    E --> E1["1. HyDE Query Expansion<br/>(Gemini Flash)"]
-    E1 --> E2["2. Hybrid Search<br/>(Weaviate: Vector + BM25)"]
-    E2 --> E3["3. LLM as a Judge<br/>(Gemini 1.5 Flash)"]
-    E3 --> E4{"Quality Assessment<br/>Best Score ≥ 7.0?"}
+    PE --> E2["`**Parallel Processing**
+    🔄 Corpus Retrieval
+    🌐 Web Search`"]
+    E2 --> H["Synthesis Agent<br/>(Gemini 2.5 Flash/Pro)"]
     
-    E4 -->|"High Quality"| H["Synthesis Agent<br/>(Gemini 1.5 Pro)"]
-    E4 -->|"Low Quality"| F
+    E --> E1["1. HyDE Query Expansion<br/>(Gemini 2.5 Flash Lite)"]
+    E1 --> E3["2. Hybrid Search<br/>(Weaviate: Vector + BM25)"]
+    E3 --> E4["3. LLM as a Judge<br/>(Gemini 2.5 Flash)"]
+    E4 --> E5{"Quality Assessment<br/>Best Score ≥ 7.0?"}
     
-    F --> F1["Query Optimization<br/>(Gemini Flash)"]
+    E5 -->|"High Quality"| H
+    E5 -->|"Low Quality"| F
+    
+    F --> F1["Query Optimization<br/>(Gemini 2.5 Flash Lite)"]
     F1 --> F2["Tavily API Search"]
     F2 --> H
     
@@ -86,22 +75,24 @@ graph TD
     H --> J["Final Answer<br/>with Citations"]
     
     style E fill:#e1f5fe
-    style E3 fill:#f3e5f5
-    style E4 fill:#fff3e0
+    style E4 fill:#f3e5f5
+    style E5 fill:#fff3e0
     style F fill:#e8f5e8
     style H fill:#fce4ec
     style P fill:#fff8e1
+    style PE fill:#fff9c4
+    style E2 fill:#e8f5e8
 ```
 
 ### **Agent Capabilities Matrix**
 
 | Agent | Capabilities | LLM Used | Purpose |
 |-------|-------------|----------|---------|
-| **Routing** | `intent_classification`, `query_analysis` | Gemini 1.5 Flash | Fast, cost-effective intent routing |
+| **Routing** | `intent_classification`, `query_analysis` | Gemini 2.5 Flash Lite | Fast, cost-effective intent routing |
 | **Planner** | `task_planning`, `workflow_orchestration` | Gemini 2.5 Flash Lite | Dynamic agent execution planning |
-| **Corpus Retrieval** | `document_search`, `rag`, `hybrid_search` | Gemini 1.5 Flash + Embedding | Advanced RAG pipeline with LLM Judge |
-| **Web Search** | `web_search`, `external_search` | Gemini Flash + Tavily | Current information retrieval |
-| **Synthesis** | `response_synthesis`, `answer_generation` | Gemini 1.5 Pro | High-quality answer generation |
+| **Corpus Retrieval** | `document_search`, `rag`, `hybrid_search` | Gemini 2.5 Flash + Embedding | Advanced RAG pipeline with LLM Judge |
+| **Web Search** | `web_search`, `external_search` | Gemini 2.5 Flash Lite + Tavily | Current information retrieval |
+| **Synthesis** | `response_synthesis`, `answer_generation` | Gemini 2.5 Flash/Pro | High-quality answer generation |
 
 ## 🛠️ Quick Start
 
@@ -110,7 +101,6 @@ graph TD
 - **Docker & Docker Compose**
 - **Google AI Studio API Key** (free tier available)
 - **Tavily API Key** (optional, for web search)
-- **NVIDIA Container Toolkit** (optional, for GPU support)
 
 ### 1. Environment Setup
 
@@ -124,34 +114,44 @@ cp env.template .env
 
 # Add your API keys to .env
 GOOGLE_API_KEY=your_google_ai_studio_key_here
-TAVILY_API_KEY=your_tavily_key_here  # Optional
+TAVILY_API_KEY=your_tavily_key_here
 ```
 
 ### 2. Run with Docker (Recommended)
 
-#### CPU Only
 ```bash
 # Start the entire system
 docker-compose up -d
 
 # Check that services are running
 docker-compose ps
+
+# View logs (optional)
+docker-compose logs -f app
 ```
+
+**Note:** The system automatically configures user permissions to match your host system using `USER_ID` and `GROUP_ID` environment variables. This ensures proper file ownership for logs and data volumes.
 
 ## 🔮 Future GPU Enhancement
 
-**Transformer Reranking Implementation Roadmap**
+**Cross-Encoder Reranking Implementation**
 
-If you have access to a GPU with **at least 8GB of VRAM**, we can implement an advanced transformer-based reranking system using models like `Qwen/Qwen3-Reranker-0.6B` or similar cross-encoder architectures. This would provide:
+During this exercise, we implemented the LLM-as-a-Judge approach due to hardware constraints. However, modern cross-encoder models like `Qwen/Qwen3-Reranker-0.6B` have been trained on extensive datasets including scientific papers and would provide excellent domain-specific reranking capabilities.
 
+**Why Cross-Encoder Wasn't Implemented:**
+- **Hardware Limitations**: Limited GPU resources during development
+- **Processing Time**: Batch processing was too slow on available hardware
+- **Development Timeline**: Exercise timeframe required a faster implementation approach
+
+**Future Implementation Benefits:**
+- **Domain-Specific Training**: Models like Qwen3-Reranker are trained on scientific literature
 - **Enhanced Precision**: Fine-grained relevance scoring between query-document pairs
-- **Domain Adaptation**: Potential for fine-tuning on academic literature
-- **Quality Boost**: Improved retrieval quality over hybrid search alone
+- **Quality Boost**: Improved retrieval quality over hybrid search and LLM judge
 
-**Implementation would include:**
+**Implementation Plan:**
 - GPU-optimized model loading with 8-bit quantization
-- Batch processing for efficiency
-- Fallback to current hybrid search approach for compatibility
+- Efficient batch processing for multiple document pairs
+- Hybrid approach: Cross-encoder + LLM judge for different scenarios
 - Configuration-driven enable/disable functionality
 
 **Technical Requirements:**
@@ -159,7 +159,7 @@ If you have access to a GPU with **at least 8GB of VRAM**, we can implement an a
 - CUDA toolkit and container runtime
 - Additional dependencies: `transformers`, `torch`, `accelerate`, `bitsandbytes`
 
-This enhancement remains on our roadmap pending hardware availability.
+This enhancement is a high priority for future development with adequate hardware resources.
 
 The system will be available at:
 - **API**: http://localhost:8000
@@ -185,6 +185,19 @@ curl -X POST "http://localhost:8000/api/v1/ask" \
        "query": "What methodology did Zhang et al. use for prompt optimization?",
        "session_id": "test-session"
      }'
+```
+
+### 5. Monitor Document Processing
+
+```bash
+# Check document processing status
+curl -X GET "http://localhost:8000/api/v1/documents/{document_id}/status"
+
+# View all documents
+curl -X GET "http://localhost:8000/api/v1/documents"
+
+# Get database statistics
+curl -X GET "http://localhost:8000/api/v1/documents/stats"
 ```
 
 ## 📚 API Reference
@@ -242,6 +255,20 @@ List all ingested documents.
 
 #### **DELETE /api/v1/documents**
 Clear all documents from the database.
+
+### Evaluation & Dataset Generation
+
+#### **POST /api/v1/evaluation/generate-dataset**
+Generate golden Q&A dataset from ingested documents (background task).
+
+#### **GET /api/v1/evaluation/golden-dataset**
+Retrieve the generated golden dataset with metadata.
+
+#### **GET /api/v1/evaluation/golden-dataset/stats**
+Get statistics about the golden dataset without loading full content.
+
+#### **POST /api/v1/evaluation/run**
+Run comprehensive evaluation of the RAG system using the golden dataset.
 
 ## 🔧 Adding New Agents (Senior-Level Extensibility)
 
@@ -406,7 +433,7 @@ Our system implements the assignment requirement perfectly:
    → Corpus Retrieval → LLM Judge: "score": 6.0 → Best: 6.0 (MEDIUM) → Web Search ✓
    ```
    
-4. **Model Used (gemini-1.5-flash):**
+4. **Model Used (gemini-2.5-flash):**
    - **Context Window**: 1M Tokens (eliminates chunk truncation)
    - **Strengths**: Speed, cost-effectiveness, and strong reasoning for evaluation tasks.
    - **Output**: Structured JSON for reliable, transparent routing.
@@ -452,6 +479,41 @@ GET /api/v1/agents/info
 
 The extensible architecture enables easy addition of:
 
+### **Agnostic LLM Provider System**
+
+**Multi-Provider Support Implementation**
+
+Currently, the system is tightly coupled to Google's Gemini API. A future enhancement would implement an agnostic LLM provider system that allows seamless switching between different providers:
+
+**Supported Providers:**
+- **OpenAI**: GPT-4, GPT-3.5-turbo with structured outputs
+- **Anthropic**: Claude 3.5 Sonnet/Haiku for enhanced reasoning
+- **Google Gemini**: Current implementation (Flash/Pro models)
+- **OpenRouter**: Access to multiple models through unified API
+- **Local Models**: Ollama integration for on-premise deployment
+
+**Implementation Benefits:**
+- **Cost Optimization**: Switch to most cost-effective provider per use case
+- **Performance Tuning**: Use best model for each agent type (fast for routing, powerful for synthesis)
+- **Fallback Strategy**: Automatic provider switching on rate limits or failures
+- **A/B Testing**: Compare model performance across providers
+- **Compliance**: Choose providers meeting specific regulatory requirements
+
+**Technical Architecture:**
+```python
+class LLMProvider(ABC):
+    async def generate(self, prompt: str, config: GenerationConfig) -> Response
+    
+class OpenAIProvider(LLMProvider): ...
+class AnthropicProvider(LLMProvider): ...
+class GeminiProvider(LLMProvider): ...  # Current implementation
+
+# Configuration-driven provider selection
+llm_factory = LLMProviderFactory(config.provider_name)
+```
+
+This enhancement would significantly improve the system's flexibility and production readiness.
+
 ### **LLM Judge & Re-ranking Enhancements**
 
 The "LLM as a Judge" architecture is powerful, but it can be further enhanced:
@@ -461,15 +523,15 @@ The "LLM as a Judge" architecture is powerful, but it can be further enhanced:
     *   **Improvement:** Experiment with more advanced prompting strategies. This includes adding few-shot examples of good and bad assessments to the prompt, or using a "Chain of Thought" approach where the model first explains its reasoning before assigning a score. This can improve the consistency and accuracy of its judgments.
 
 2.  **Fine-Tuning a Specialized Judge Model**
-    *   **Limitation:** We rely on the zero-shot capabilities of `gemini-1.5-flash`. While strong, it's not specialized for our exact task.
-    *   **Improvement:** For the highest level of quality, use a powerful model like `gemini-1.5-pro` to generate a high-quality dataset of `(query, passage, assessment)` tuples. Then, fine-tune a smaller, faster model (like `gemini-1.5-flash` or an open-source alternative) on this dataset. This creates a highly accurate, fast, and cost-effective judge specialized for our academic domain.
+    *   **Limitation:** We rely on the zero-shot capabilities of `gemini-2.5-flash`. While strong, it's not specialized for our exact task.
+    *   **Improvement:** For the highest level of quality, use a powerful model like `gemini-2.5-pro` to generate a high-quality dataset of `(query, passage, assessment)` tuples. Then, fine-tune a smaller, faster model (like `gemini-2.5-flash` or an open-source alternative) on this dataset. This creates a highly accurate, fast, and cost-effective judge specialized for our academic domain.
 
 3.  **Integrating Advanced Re-ranking Logic**
     *   **Limitation:** The current system relies solely on the LLM Judge's relevance score.
     *   **Improvement:** Implement a more advanced re-ranking logic that considers the set of documents as a whole. After the LLM Judge identifies relevant documents, use techniques like Maximal Marginal Relevance (MMR) to promote diversity in the top-ranked results, ensuring a more comprehensive context for the synthesis agent by avoiding redundant information.
 
 4.  **Optimizing for Latency and Cost**
-    *   **Limitation:** While `gemini-1.5-flash` is fast, a model call is still a point of latency.
+    *   **Limitation:** While `gemini-2.5-flash` is fast, a model call is still a point of latency.
     *   **Improvement:** Implement a two-stage judging process. First, use a very fast, local model (like a fine-tuned cross-encoder, if speed is paramount) to perform an initial broad filtering of the 30 candidate chunks down to the top 10. Then, use the powerful LLM Judge only on this highly-relevant, smaller set. This hybrid approach can balance speed, cost, and quality.
 
 ### **ReAct Architecture Enhancements**
