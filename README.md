@@ -166,7 +166,6 @@ During this exercise, we implemented the LLM-as-a-Judge approach due to hardware
 - **Quality Boost**: Improved retrieval quality over hybrid search and LLM judge
 
 **Implementation Plan:**
-- GPU-optimized model loading with 8-bit quantization using `bitsandbytes`.
 - High-throughput inference serving with the **vLLM library** for optimized performance.
 - Efficient batch processing for multiple document pairs.
 - Hybrid approach: Cross-encoder + LLM judge for different scenarios.
@@ -175,7 +174,7 @@ During this exercise, we implemented the LLM-as-a-Judge approach due to hardware
 **Technical Requirements:**
 - NVIDIA GPU with 8GB+ VRAM
 - CUDA toolkit and container runtime
-- Additional dependencies: `transformers`, `torch`, `accelerate`, `bitsandbytes`, `vllm`
+- Additional dependencies: `transformers`, `torch`, `vllm`
 
 This enhancement is a high priority for future development with adequate hardware resources.
 
