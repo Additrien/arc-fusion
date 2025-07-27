@@ -628,6 +628,80 @@ GET /api/v1/sessions/{session_id}
 GET /api/v1/agents/info
 ```
 
+### Comprehensive Testing with test_app.sh
+
+For thorough system validation, we provide a comprehensive test script that validates all major functionalities:
+
+```bash
+# Make the script executable (first time only)
+chmod +x test_app.sh
+
+# Run comprehensive tests
+./test_app.sh
+```
+
+**What the test script validates:**
+
+🔗 **Follow-up Questions & Context Continuity**
+- Tests session memory across multiple related queries
+- Validates context preservation in conversational flows
+- Ensures proper reference resolution in follow-up questions
+
+🤔 **Advanced Clarification System**
+- Tests handling of ambiguous queries with vague quantifiers
+- Validates clarification requests for undefined referents
+- Tests system response to unclear comparison requests
+
+🧠 **ReAct System - Complex Multi-Step Reasoning**
+- Tests complex queries requiring multiple retrieval strategies
+- Validates adaptive agent path selection based on query complexity
+- Tests quality-driven replanning and fallback mechanisms
+
+🎯 **Domain-Specific Academic Queries**
+- Tests precise academic paper queries with specific metrics
+- Validates citation accuracy and source attribution
+- Tests comparative analysis across multiple papers
+
+⚠️ **Edge Cases and Error Handling**
+- Tests empty query handling
+- Validates out-of-scope query routing to web search
+- Tests nonsensical query graceful degradation
+
+🧠 **Session Memory Management**
+- Tests memory persistence across conversation turns
+- Validates memory clearing functionality
+- Tests context loss handling after memory clear
+
+🚀 **Performance Optimizations Validation**
+- Validates configuration optimizations are applied
+- Tests dynamic worker pool configuration
+- Validates query caching system implementation
+- Tests parallel execution framework
+
+📊 **System Performance Monitoring**
+- Tests performance metrics endpoints
+- Validates cache information retrieval
+- Tests document statistics and agent information endpoints
+
+🏥 **System Health Checks**
+- Validates all system components are healthy
+- Tests API endpoint availability
+- Validates service dependencies
+
+**Expected Test Output:**
+The script provides detailed output showing:
+- Query processing with agent paths taken
+- Response quality and confidence scores
+- Processing times and performance metrics
+- Evidence of ReAct behavior (adaptive routing, replanning)
+- System health and performance statistics
+
+**Usage Tips:**
+- Run after system startup to validate all components
+- Use to verify new agent integrations work correctly
+- Run before production deployment as a smoke test
+- Monitor output for performance regression detection
+
 ## 🔮 Future Improvements
 
 The extensible architecture enables easy addition of:
