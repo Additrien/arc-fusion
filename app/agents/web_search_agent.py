@@ -16,6 +16,7 @@ from .registry import AgentRegistry
 from .state import GraphState
 from ..utils.logger import get_logger
 from ..prompts import WEB_SEARCH_OPTIMIZATION_PROMPT
+from .. import config
 
 logger = get_logger('arc_fusion.agents.web_search')
 
@@ -32,11 +33,11 @@ class WebSearchService:
             logger.warning("TAVILY_API_KEY not set - web search will be disabled")
         
         # Use Gemini Flash for query optimization
-        self.query_optimizer_model = 'gemini-2.5-flash'
+        self.query_optimizer_model = config.WEB_SEARCH_QUERY_MODEL
         
         # Tavily API configuration
-        self.tavily_base_url = "https://api.tavily.com"
-        self.max_results = 8
+        self.tavily_base_url = config.TAVILY_API_URL
+        self.max_results = config.TAVILY_MAX_RESULTS
         
     async def search_web(self, state: GraphState) -> GraphState:
         """
@@ -140,7 +141,7 @@ class WebSearchService:
             "exclude_domains": []
         }
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=config.TAVILY_TIMEOUT) as client:
             try:
                 response = await client.post(
                     f"{self.tavily_base_url}/search",
@@ -203,7 +204,7 @@ class WebSearchService:
         """Create state when web search is disabled (no API key)."""
         updated_state = state.copy()
         updated_state.update({
-            "web_context": ["Web search is currently unavailable (API key not configured)."],
+            "web_context": [config.WEB_SEARCH_DISABLED_MESSAGE],
             "web_sources": [],
             "search_query": None,
             "step_count": state.get("step_count", 0) + 1,
@@ -230,7 +231,7 @@ class WebSearchService:
         """Create state when an error occurs."""
         updated_state = state.copy()
         updated_state.update({
-            "web_context": ["An error occurred while searching the web. Please try again."],
+            "web_context": [config.WEB_SEARCH_ERROR_MESSAGE],
             "web_sources": [],
             "search_query": None,
             "step_count": state.get("step_count", 0) + 1,

@@ -33,9 +33,9 @@ class ClarificationService:
         
         # Generation config for precise, thoughtful responses
         self.generation_config = {
-            "temperature": 0.2,  # Slightly higher for more natural clarification
-            "top_p": 0.9,
-            "max_output_tokens": 500,  # More space for detailed clarification
+            "temperature": config.CLARIFICATION_TEMP,
+            "top_p": config.CLARIFICATION_TOP_P,
+            "max_output_tokens": config.CLARIFICATION_MAX_TOKENS,
             "thinking_config": {
                 "thinking_budget": 0
             }
@@ -88,7 +88,7 @@ class ClarificationService:
                 "requires_clarification": True,
                 "step_count": state.get("step_count", 0) + 1,
                 "citations": [],
-                "answer_confidence": 0.9,
+                "answer_confidence": config.CLARIFICATION_RESPONSE_CONFIDENCE,
                 "clarification_round": clarification_round + 1,
                 "ambiguity_analysis": ambiguity_analysis,
                 "clarification_options": clarification_result.get("options", []),
@@ -134,7 +134,7 @@ class ClarificationService:
     def _extract_conversation_patterns(self, messages: List[Dict[str, Any]]) -> List[str]:
         """Extract topic patterns from conversation history."""
         patterns = []
-        for msg in messages[-3:]:  # Look at last 3 messages for context
+        for msg in messages[-config.CLARIFICATION_CONTEXT_MESSAGES:]:
             if msg.get("role") == "user":
                 content = msg.get("content", "").lower()
                 # Simple pattern extraction - could be enhanced with NLP
@@ -167,22 +167,19 @@ class ClarificationService:
         query_lower = query.lower()
         
         # Detect vague quantifiers
-        vague_quantifiers = ["many", "enough", "few", "some", "several", "most"]
-        for term in vague_quantifiers:
+        for term in config.VAGUE_QUANTIFIERS:
             if term in query_lower:
                 ambiguous_terms.append(term)
                 ambiguity_types.append("vague_quantifier")
         
         # Detect undefined referents
-        referents = ["it", "this", "that", "they", "them", "these", "those"]
-        for ref in referents:
+        for ref in config.UNDEFINED_REFERENTS:
             if f" {ref} " in f" {query_lower} ":
                 ambiguous_terms.append(ref)
                 ambiguity_types.append("undefined_referent")
         
         # Detect comparative terms without clear comparison
-        comparatives = ["better", "best", "worse", "optimal", "superior"]
-        for comp in comparatives:
+        for comp in config.UNCLEAR_COMPARISONS:
             if comp in query_lower:
                 ambiguous_terms.append(comp)
                 ambiguity_types.append("unclear_comparison")
@@ -233,8 +230,8 @@ class ClarificationService:
 **Available Context:**
 - Papers in knowledge base: {len(available_papers)}
 - Conversation patterns: {', '.join(conversation_patterns) if conversation_patterns else 'None detected'}
-- Available papers: {', '.join(available_papers[:3]) if available_papers else 'None'}
-{'... and more' if len(available_papers) > 3 else ''}
+- Available papers: {', '.join(available_papers[:config.CLARIFICATION_MAX_PAPERS_TO_SHOW]) if available_papers else 'None'}
+{'... and more' if len(available_papers) > config.CLARIFICATION_MAX_PAPERS_TO_SHOW else ''}
 
 **Ambiguity Analysis:**
 - Ambiguous terms detected: {', '.join(ambiguous_terms) if ambiguous_terms else 'None specific'}
@@ -299,7 +296,7 @@ Generate your clarification response now:
         
         return {
             "response": response_text,
-            "options": options[:3],  # Limit to 3 options
+            "options": options[:config.CLARIFICATION_MAX_OPTIONS],
             "strategy": "contextual_options" if options else "general_clarification"
         }
     
@@ -319,11 +316,11 @@ Generate your clarification response now:
         """Create state when clarification fails."""
         updated_state = state.copy()
         updated_state.update({
-            "final_answer": "I'm sorry, but I'm having trouble understanding your question. Could you please provide more specific details about what you're looking for?",
+            "final_answer": config.CLARIFICATION_ERROR_MESSAGE,
             "requires_clarification": True,
             "step_count": state.get("step_count", 0) + 1,
             "citations": [],
-            "answer_confidence": 0.3,
+            "answer_confidence": config.CLARIFICATION_ERROR_CONFIDENCE,
             "error_info": {
                 **state.get("error_info", {}),
                 "clarification_error": str(error)

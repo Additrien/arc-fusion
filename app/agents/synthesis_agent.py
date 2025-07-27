@@ -37,9 +37,9 @@ class SynthesisService:
         
         # Optimized generation configuration for speed
         self.generation_config = {
-            "temperature": 0.1,  # Low temperature for factual accuracy
-            "top_p": 0.8,
-            "max_output_tokens": 1024,
+            "temperature": config.SYNTHESIS_TEMP,
+            "top_p": config.SYNTHESIS_TOP_P,
+            "max_output_tokens": config.SYNTHESIS_MAX_TOKENS,
             "thinking_config": {
                 "thinking_budget": 0
             }
@@ -269,29 +269,28 @@ class SynthesisService:
             Confidence score between 0.0 and 1.0
         """
         
-        confidence = 0.5  # Base confidence
+        confidence = config.SYNTHESIS_BASE_CONFIDENCE
         
         # Boost confidence based on context availability
         if context_info["has_document_context"]:
-            confidence += 0.2
+            confidence += config.SYNTHESIS_DOC_CONTEXT_BONUS
             # More sources = higher confidence
             doc_count = len(context_info["document_sources"])
-            confidence += min(0.1 * doc_count, 0.2)
+            confidence += min(config.SYNTHESIS_DOC_COUNT_BONUS * doc_count, config.SYNTHESIS_MAX_DOC_BONUS)
         
         if context_info["has_web_context"]:
-            confidence += 0.15
+            confidence += config.SYNTHESIS_WEB_CONTEXT_BONUS
             # More sources = higher confidence
             web_count = len(context_info["web_sources"])
-            confidence += min(0.05 * web_count, 0.15)
+            confidence += min(config.SYNTHESIS_WEB_COUNT_BONUS * web_count, config.SYNTHESIS_MAX_WEB_BONUS)
         
         # Reduce confidence for short answers (might indicate insufficient info)
-        if len(answer) < 100:
-            confidence -= 0.1
+        if len(answer) < config.SYNTHESIS_SHORT_ANSWER_LENGTH:
+            confidence -= config.SYNTHESIS_SHORT_ANSWER_PENALTY
         
         # Reduce confidence if answer mentions lack of information
-        uncertainty_phrases = ["not available", "insufficient information", "cannot determine", "unclear"]
-        if any(phrase in answer.lower() for phrase in uncertainty_phrases):
-            confidence -= 0.2
+        if any(phrase in answer.lower() for phrase in config.SYNTHESIS_UNCERTAINTY_PHRASES):
+            confidence -= config.SYNTHESIS_UNCERTAINTY_PENALTY
         
         return max(0.0, min(1.0, confidence))
     
@@ -299,7 +298,7 @@ class SynthesisService:
         """Create state when synthesis fails."""
         updated_state = state.copy()
         updated_state.update({
-            "final_answer": "I apologize, but I encountered an error while processing your request. Please try rephrasing your question or try again.",
+            "final_answer": config.SYNTHESIS_ERROR_MESSAGE,
             "citations": [],
             "answer_confidence": 0.0,
             "step_count": state.get("step_count", 0) + 1,

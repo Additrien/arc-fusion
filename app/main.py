@@ -17,6 +17,7 @@ from app.core.factories import get_document_processor, get_vector_store, get_age
 from app.utils.logger import init_logging_from_env, get_logger, set_request_id
 from app.utils.performance import get_performance_summary, clear_performance_metrics
 from app.utils.cache import embedding_cache, hyde_cache
+from app import config as app_config
 import uuid
 
 load_dotenv()
@@ -129,11 +130,11 @@ async def get_cache_info():
     return {
         "embedding_cache": {
             "size": embedding_cache.size(),
-            "ttl": 3600
+            "ttl": app_config.EMBEDDING_CACHE_TTL
         },
         "hyde_cache": {
             "size": hyde_cache.size(),
-            "ttl": 1800
+            "ttl": app_config.HYDE_CACHE_TTL
         }
     }
 
@@ -512,7 +513,7 @@ async def get_session_info(session_id: str):
 async def generate_dataset_task(total_pairs: int):
     """Background task for generating the golden dataset from Weaviate."""
     logger.info(f"Background dataset generation started, targeting {total_pairs} pairs.")
-    output_file = "data/golden_dataset.jsonl"  # Changed to data directory
+    output_file = app_config.GOLDEN_DATASET_PATH
 
     vector_store = VectorStore()
     generator_service = DatasetGeneratorService()
@@ -538,7 +539,7 @@ async def generate_dataset_task(total_pairs: int):
 @app.post("/api/v1/evaluation/generate-dataset", status_code=status.HTTP_202_ACCEPTED)
 async def generate_golden_dataset(
     background_tasks: BackgroundTasks,
-    total_pairs: int = Query(50, description="The total number of Q&A pairs to generate.")
+    total_pairs: int = Query(app_config.DEFAULT_QA_PAIRS, description="The total number of Q&A pairs to generate.")
 ):
     """
     Trigger the generation of the golden Q&A dataset from Weaviate chunks in the background.
@@ -550,7 +551,7 @@ async def generate_golden_dataset(
     
     return {
         "message": "Golden dataset generation from Weaviate chunks has been started in the background.",
-        "output_file": "data/golden_dataset.jsonl",  # Updated path
+        "output_file": app_config.GOLDEN_DATASET_PATH,
         "target_pairs": total_pairs
     }
 
@@ -562,7 +563,7 @@ async def get_golden_dataset():
     Returns the Q&A pairs from the golden dataset file with metadata.
     """
     request_id = set_request_id()
-    golden_dataset_path = "data/golden_dataset.jsonl"
+    golden_dataset_path = app_config.GOLDEN_DATASET_PATH
     
     logger.info("Golden dataset retrieval requested", extra={"request_id": request_id})
     
@@ -616,7 +617,7 @@ async def get_golden_dataset_stats():
     Retrieve metadata about the golden dataset without loading the full dataset.
     """
     request_id = set_request_id()
-    golden_dataset_path = "data/golden_dataset.jsonl"
+    golden_dataset_path = app_config.GOLDEN_DATASET_PATH
     
     logger.info("Golden dataset stats retrieval requested", extra={"request_id": request_id})
     
@@ -642,7 +643,7 @@ async def get_golden_dataset_stats():
                         try:
                             qa_pair = json.loads(line)
                             total_pairs += 1
-                            if len(sample_questions) < 5:  # Take first 5 questions as a sample
+                            if len(sample_questions) < app_config.DATASET_SAMPLE_QUESTIONS:
                                 sample_questions.append(qa_pair.get("question", "N/A"))
                         except json.JSONDecodeError:
                             pass # Skip malformed lines

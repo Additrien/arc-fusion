@@ -274,7 +274,7 @@ class CorpusRetrievalService:
             return embedding
         except Exception as e:
             logger.warning(f"Embedding generation failed, using empty embedding: {str(e)}")
-            return [0.0] * 768  # Return zero embedding as fallback
+            return [0.0] * config.FALLBACK_EMBEDDING_DIM
 
     @time_async_block("corpus_retrieval.parent_retrieval")
     async def _get_parent_chunks(self, child_results: List[dict]) -> Tuple[List[str], List[dict], List[float]]:
@@ -335,16 +335,21 @@ class CorpusRetrievalService:
         """Generate ReAct observation from retrieval results."""
         
         # Analyze retrieval quality
-        quality_assessment = "high" if best_score >= 0.8 else "medium" if best_score >= 0.5 else "low"
+        if best_score >= config.RETRIEVAL_HIGH_QUALITY_THRESHOLD:
+            quality_assessment = "high"
+        elif best_score >= config.RETRIEVAL_MEDIUM_QUALITY_THRESHOLD:
+            quality_assessment = "medium"
+        else:
+            quality_assessment = "low"
         
         # Determine status and details
         if not context:
             status = "no_results_found"
             details = "No relevant documents found in corpus"
-        elif best_score < 0.3:
+        elif best_score < config.RETRIEVAL_LOW_QUALITY_THRESHOLD:
             status = "quality_too_low"
             details = f"Best relevance score {best_score:.3f} is too low for reliable answers"
-        elif len(context) < 2:
+        elif len(context) < config.RETRIEVAL_SUFFICIENT_CONTEXT_CHUNKS:
             status = "context_insufficient"
             details = f"Only {len(context)} relevant chunk found, may need additional sources"
         else:
@@ -358,9 +363,9 @@ class CorpusRetrievalService:
             "quality_assessment": quality_assessment,
             "chunks_found": len(context),
             "best_score": best_score,
-            "quality_too_low": best_score < 0.3,
-            "context_insufficient": len(context) < 2,
-            "needs_web_fallback": best_score < 0.5,
+            "quality_too_low": best_score < config.RETRIEVAL_LOW_QUALITY_THRESHOLD,
+            "context_insufficient": len(context) < config.RETRIEVAL_SUFFICIENT_CONTEXT_CHUNKS,
+            "needs_web_fallback": best_score < config.RETRIEVAL_MEDIUM_QUALITY_THRESHOLD,
             "timestamp": 0  # Will be updated by caller
         }
     
@@ -371,7 +376,7 @@ class CorpusRetrievalService:
         
         for i, (chunk, source, score) in enumerate(zip(context, sources, scores)):
             # Extract key information from chunk
-            summary = chunk[:200] + "..." if len(chunk) > 200 else chunk
+            summary = chunk[:config.EVIDENCE_SUMMARY_LENGTH] + "..." if len(chunk) > config.EVIDENCE_SUMMARY_LENGTH else chunk
             
             evidence.append({
                 "source": source.get("filename", "Unknown"),
@@ -388,10 +393,10 @@ class CorpusRetrievalService:
         
         # Trigger replanning if:
         triggers = [
-            best_score < 0.3,  # Very low quality
-            chunk_count == 0,  # No results
-            chunk_count == 1 and "compare" in query.lower(),  # Comparison query with insufficient context
-            best_score < 0.5 and any(term in query.lower() for term in ["recent", "latest", "current", "new"])  # Temporal query with low quality
+            best_score < config.REPLANNING_LOW_QUALITY_SCORE,
+            chunk_count == 0,
+            chunk_count == 1 and "compare" in query.lower(),
+            best_score < config.REPLANNING_INSUFFICIENT_CONTEXT_SCORE and any(term in query.lower() for term in ["recent", "latest", "current", "new"])
         ]
         
         should_replan = any(triggers)
@@ -404,11 +409,11 @@ class CorpusRetrievalService:
     def _determine_focus(self, query: str, best_score: float, chunk_count: int) -> str:
         """Determine what the system should focus on next."""
         
-        if best_score < 0.3:
+        if best_score < config.RETRIEVAL_LOW_QUALITY_THRESHOLD:
             return "web_search_fallback"
-        elif chunk_count < 2 and any(word in query.lower() for word in ["compare", "versus", "vs"]):
+        elif chunk_count < config.RETRIEVAL_SUFFICIENT_CONTEXT_CHUNKS and any(word in query.lower() for word in ["compare", "versus", "vs"]):
             return "comparison_needs_more_sources"
-        elif best_score < 0.5:
+        elif best_score < config.RETRIEVAL_MEDIUM_QUALITY_THRESHOLD:
             return "supplementary_web_search"
         else:
             return "synthesis_ready"
