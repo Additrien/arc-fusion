@@ -1,6 +1,6 @@
 # Arc-Fusion: Extensible Multi-Agent RAG System
 
-A state-of-the-art multi-agent Retrieval-Augmented Generation system built with **LangGraph**, **FastAPI**, and **Google Gemini**. Designed with senior-level extensibility in mind, demonstrating advanced agent orchestration patterns and production-ready architecture.
+A multi-agent Retrieval-Augmented Generation system built with **LangGraph**, **FastAPI**, and **Google Gemini**. Designed with extensibility in mind, demonstrating agent orchestration patterns and a production-ready architecture.
 
 ## 🚀 Key Features
 
@@ -166,15 +166,16 @@ During this exercise, we implemented the LLM-as-a-Judge approach due to hardware
 - **Quality Boost**: Improved retrieval quality over hybrid search and LLM judge
 
 **Implementation Plan:**
-- GPU-optimized model loading with 8-bit quantization
-- Efficient batch processing for multiple document pairs
-- Hybrid approach: Cross-encoder + LLM judge for different scenarios
-- Configuration-driven enable/disable functionality
+- GPU-optimized model loading with 8-bit quantization using `bitsandbytes`.
+- High-throughput inference serving with the **vLLM library** for optimized performance.
+- Efficient batch processing for multiple document pairs.
+- Hybrid approach: Cross-encoder + LLM judge for different scenarios.
+- Configuration-driven enable/disable functionality.
 
 **Technical Requirements:**
 - NVIDIA GPU with 8GB+ VRAM
 - CUDA toolkit and container runtime
-- Additional dependencies: `transformers`, `torch`, `accelerate`, `bitsandbytes`
+- Additional dependencies: `transformers`, `torch`, `accelerate`, `bitsandbytes`, `vllm`
 
 This enhancement is a high priority for future development with adequate hardware resources.
 
@@ -287,7 +288,7 @@ Get statistics about the golden dataset without loading full content.
 #### **POST /api/v1/evaluation/run**
 Run comprehensive evaluation of the RAG system using the golden dataset.
 
-## 🔧 Adding New Agents (Senior-Level Extensibility)
+## 🔧 Adding New Agents
 
 The system is designed for effortless agent expansion. Here's how to add a **Citation Agent**:
 
@@ -488,7 +489,7 @@ ENABLE_RATE_LIMITING = False   # Disabled for speed
 - ✅ Clear documentation and code organization
 - ✅ Type hints and async/await throughout
 
-This architecture successfully balances the assignment's emphasis on **"progress over polish"** while demonstrating **senior-level engineering thinking** through extensible patterns and thoughtful trade-off decisions.
+This architecture successfully balances the assignment's emphasis on **"progress over polish"** while demonstrating extensible patterns and thoughtful trade-off decisions.
 
 ## 🚀 Production Deployment
 
@@ -907,7 +908,7 @@ With the introduction of the PlannerAgent, the system now implements a foundatio
 
 ## 🏆 Technical Highlights
 
-This implementation demonstrates **senior-level engineering**:
+This implementation demonstrates:
 
 - **Design Patterns**: Registry, Plugin, Factory, Middleware patterns
 - **Async Architecture**: Full async/await with proper event loop management
@@ -918,7 +919,7 @@ This implementation demonstrates **senior-level engineering**:
 - **Testing Ready**: Pytest configuration and test structure
 - **Advanced Orchestration**: Transition from rule-based to LLM-based planning with ReAct architecture foundations
 
-The **extensible agent framework** is the key innovation - it transforms adding sophisticated AI capabilities from a multi-day refactoring effort into a **single file drop-in**. With the addition of the PlannerAgent, the system now demonstrates cutting-edge agent orchestration patterns that move beyond static graphs to dynamic, model-driven execution plans.
+The **extensible agent framework** is a key innovation - it transforms adding sophisticated AI capabilities from a multi-day refactoring effort into a **single file drop-in**. With the addition of the PlannerAgent, the system now demonstrates agent orchestration patterns that move beyond static graphs to dynamic, model-driven execution plans.
 
 ## 📦 Modular Architecture Improvements
 
