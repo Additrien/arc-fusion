@@ -14,6 +14,9 @@ from .registry import AgentRegistry
 from .state import GraphState
 from ..utils.logger import get_logger
 from .. import config
+from ..prompts import (
+    PLANNER_BASIC_PROMPT, PLANNER_REACT_PROMPT
+)
 
 logger = get_logger('arc_fusion.agents.planner')
 
@@ -149,7 +152,7 @@ class PlannerService:
         return needs_replanning
     
     def _create_react_planning_prompt(self, state: GraphState) -> str:
-        """Create enhanced ReAct planning prompt with observations and reasoning."""
+        """Create enhanced ReAct planning prompt with observations and reasoning using centralized prompts."""
         # Get available agents and their capabilities
         agents_info = self._get_agents_info()
         
@@ -167,51 +170,16 @@ class PlannerService:
         reasoning_text = self._format_reasoning_log(reasoning_log)
         evidence_text = self._format_evidence(gathered_evidence)
         
-        return f"""
-You are an expert ReAct (Reason + Act) planner for a multi-agent RAG system. You can observe the results of actions and iteratively refine your plan to better satisfy complex user queries.
-
-**Available Agents and Their Capabilities:**
-{agents_info}
-
-**Current Situation:**
-- User Query: "{query}"
-- Classified Intent: {intent}
-- Planning Iteration: {plan_iteration + 1}
-- Tasks Already Completed: {tasks_completed}
-
-**Previous Reasoning:**
-{reasoning_text}
-
-**Observations from Previous Actions:**
-{obs_text}
-
-**Evidence Gathered So Far:**
-{evidence_text}
-
-**ReAct Planning Instructions:**
-1. REASON: Analyze the observations from previous actions
-2. ASSESS: Determine if the current approach is working or needs adjustment
-3. PLAN: Design the next steps based on what you've learned
-4. FOCUS: Identify what specific aspect needs attention
-
-**Key ReAct Patterns:**
-- If retrieval quality was low → try different search strategy or move to web search
-- If information is incomplete → gather more specific context before synthesis
-- If conflicting evidence found → investigate deeper or seek clarification
-- If user query is complex → break into sub-questions and tackle systematically
-
-**Response Format:**
-REASONING: <analyze what the observations tell us and what we should do next>
-FOCUS: <what specific aspect should we concentrate on now>
-PLAN: <comma-separated list of agent names in execution order>
-CONFIDENCE: <0-1 score indicating confidence in this plan>
-
-Example Response:
-REASONING: The corpus retrieval found some relevant information but with low confidence scores (0.3). The user is asking about methodologies comparison, so we need more comprehensive coverage. Let me try web search to supplement the corpus data.
-FOCUS: comparative methodology analysis
-PLAN: web_search,synthesis
-CONFIDENCE: 0.85
-"""
+        return PLANNER_REACT_PROMPT.format(
+            agents_info=agents_info,
+            query=query,
+            intent=intent,
+            plan_iteration=plan_iteration + 1,
+            tasks_completed=tasks_completed,
+            reasoning_text=reasoning_text,
+            observations_text=obs_text,
+            evidence_text=evidence_text
+        )
         
     def _format_observations(self, observations: List[Dict[str, Any]]) -> str:
         """Format observations for the planning prompt."""
@@ -255,7 +223,7 @@ CONFIDENCE: 0.85
         return "\n".join(formatted)
     
     def _create_planning_prompt(self, state: GraphState) -> str:
-        """Create the prompt for planning agent execution."""
+        """Create the prompt for planning agent execution using centralized prompts."""
         # Get available agents and their capabilities
         agents_info = self._get_agents_info()
         
@@ -266,37 +234,17 @@ CONFIDENCE: 0.85
         web_context = state.get("web_context", [])
         tasks_completed = state.get("tasks_completed", [])
         
-        return f"""
-You are an expert AI agent planner orchestrating a multi-agent system for a RAG (Retrieval-Augmented Generation) application. Your job is to dynamically plan which agents to execute and in what order to best satisfy the user's query.
-
-**Available Agents and Their Capabilities:**
-{agents_info}
-
-**Current State:**
-- User Query: "{query}"
-- Classified Intent: {intent}
-- Tasks Already Completed: {tasks_completed}
-- Retrieved Document Context Available: {"Yes" if retrieved_context else "No"}
-- Web Search Context Available: {"Yes" if web_context else "No"}
-
-**Planning Rules:**
-1. ONLY use the exact agent names from the list above
-2. Plan the minimal set of agents needed to answer the query
-3. Consider dependencies between agents (e.g., you typically need retrieval or search before synthesis)
-4. You can add web_search as a fallback if document retrieval quality is low
-5. Use clarification agent only for truly ambiguous queries
-6. End with synthesis agent to generate the final response
-
-**Response Format:**
-PLAN: <comma-separated list of agent names in execution order>
-REASONING: <brief explanation of why this plan was chosen>
-CONFIDENCE: <0-1 score indicating confidence in this plan>
-
-Example Response:
-PLAN: corpus_retrieval,synthesis
-REASONING: The query can be answered from academic papers, so we'll retrieve relevant documents and synthesize an answer.
-CONFIDENCE: 0.95
-"""
+        has_document_context = "Yes" if retrieved_context else "No"
+        has_web_context = "Yes" if web_context else "No"
+        
+        return PLANNER_BASIC_PROMPT.format(
+            agents_info=agents_info,
+            query=query,
+            intent=intent,
+            tasks_completed=tasks_completed,
+            has_document_context=has_document_context,
+            has_web_context=has_web_context
+        )
     
     def _get_agents_info(self) -> str:
         """Get formatted information about available agents."""

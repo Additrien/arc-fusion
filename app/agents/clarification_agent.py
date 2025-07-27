@@ -14,6 +14,9 @@ from .registry import AgentRegistry
 from .state import GraphState
 from ..utils.logger import get_logger
 from .. import config
+from ..prompts import (
+    CLARIFICATION_PROMPT_BASIC, CLARIFICATION_ADVANCED_PROMPT
+)
 
 logger = get_logger('arc_fusion.agents.clarification')
 
@@ -302,7 +305,7 @@ Generate your clarification response now:
     
     def _create_clarification_prompt(self, query: str) -> str:
         """
-        Create a prompt for generating clarifying questions.
+        Create a prompt for generating clarifying questions using centralized prompts.
         
         Args:
             query: The ambiguous user query
@@ -310,31 +313,7 @@ Generate your clarification response now:
         Returns:
             Formatted prompt for clarification generation
         """
-        
-        return f"""
-You are a helpful research assistant. A user has asked a question that is too vague or ambiguous to answer directly. Your job is to ask 2-3 specific clarifying questions that will help you understand what they really want to know.
-
-The ambiguous query is: "{query}"
-
-Common types of ambiguity to address:
-1. **Missing Context**: What domain, dataset, or specific area are they asking about?
-2. **Vague Terms**: What do they mean by "best", "enough", "better", "it", etc.?
-3. **Missing Scope**: Are they asking about a specific paper, method, time period, or comparison?
-4. **Undefined Referents**: What does "this", "that", "it", or "they" refer to?
-
-Your response should:
-- Be friendly and helpful
-- Ask 2-3 specific, targeted questions
-- Explain why the additional information is needed
-- Provide examples when helpful
-
-Format your response as a natural conversation, not as a numbered list.
-
-Example good clarification:
-"I'd be happy to help you with that! To give you the most accurate answer, I need a bit more context. Are you asking about examples for training a specific type of model (like text-to-SQL, question answering, etc.)? And when you say 'good accuracy,' what accuracy threshold or benchmark are you targeting? Also, are you working with a particular dataset or domain?"
-
-Generate a helpful clarification response now:
-"""
+        return CLARIFICATION_PROMPT_BASIC.format(query=query)
     
     def _create_error_state(self, state: GraphState, error: Exception) -> GraphState:
         """Create state when clarification fails."""

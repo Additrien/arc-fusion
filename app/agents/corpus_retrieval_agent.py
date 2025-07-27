@@ -24,6 +24,10 @@ from app.utils.logger import get_logger
 from app.utils.cache import embedding_cache, hyde_cache
 from app.utils.performance import time_async_block
 from app import config
+from app.prompts import (
+    HYDE_PROMPT_HEADER, HYDE_CONVERSATION_CONTEXT_SECTION, HYDE_QUERY_SECTION,
+    format_conversation_history
+)
 
 logger = get_logger('arc_fusion.agents.corpus_retrieval')
 
@@ -224,34 +228,20 @@ class CorpusRetrievalService:
         if cached_result:
             return cached_result
         
-        # Build HyDE prompt with conversation context
-        hyde_prompt_parts = [
-            "You are an expert academic researcher. Given a research question, write a detailed paragraph that would likely appear in an academic paper answering this question."
-        ]
+        # Build HyDE prompt using centralized prompts
+        prompt_parts = [HYDE_PROMPT_HEADER]
         
-        # Add conversation history if available
+        # Add conversation context if available
         if conversation_history:
-            hyde_prompt_parts.extend([
-                "\n## CONVERSATION CONTEXT",
-                "Previous conversation for understanding follow-up questions:"
-            ])
-            
-            for msg in conversation_history[-10:]:  # Last 10 messages
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                if role == "user":
-                    hyde_prompt_parts.append(f"User: {content}")
-                elif role == "assistant":
-                    hyde_prompt_parts.append(f"Assistant: {content}")
-            
-            hyde_prompt_parts.append("\n---")
+            formatted_history = format_conversation_history(conversation_history)
+            prompt_parts.append(HYDE_CONVERSATION_CONTEXT_SECTION.format(
+                conversation_history=formatted_history
+            ))
         
-        hyde_prompt_parts.extend([
-            f"\nResearch Question: {query}",
-            "\nWrite a comprehensive paragraph (100-200 words) that would contain the answer:"
-        ])
+        # Add query section
+        prompt_parts.append(HYDE_QUERY_SECTION.format(query=query))
         
-        hyde_prompt = "\n".join(hyde_prompt_parts)
+        hyde_prompt = "\n".join(prompt_parts)
         try:
             response = await self.client.aio.models.generate_content(
                 model=self.hyde_model, 

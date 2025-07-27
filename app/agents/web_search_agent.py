@@ -15,6 +15,7 @@ from google.genai import types
 from .registry import AgentRegistry
 from .state import GraphState
 from ..utils.logger import get_logger
+from ..prompts import WEB_SEARCH_OPTIMIZATION_PROMPT
 
 logger = get_logger('arc_fusion.agents.web_search')
 
@@ -93,25 +94,12 @@ class WebSearchService:
     
     async def _optimize_search_query(self, query: str) -> str:
         """
-        Optimize the user query for web search.
+        Optimize the user query for web search using centralized prompts.
         
         Transform the query into terms that are more likely to return
         relevant results from web search engines.
         """
-        
-        optimization_prompt = f"""
-You are a search query optimization expert. Transform the user's query into an optimal search query for web search engines.
-
-Guidelines:
-- Extract key terms and concepts
-- Remove conversational elements
-- Add relevant synonyms or related terms
-- Make it specific enough to avoid generic results
-- Keep it concise (5-10 words max)
-
-Original Query: "{query}"
-
-Optimized Search Query:"""
+        optimization_prompt = WEB_SEARCH_OPTIMIZATION_PROMPT.format(query=query)
         
         try:
             response = client.models.generate_content(

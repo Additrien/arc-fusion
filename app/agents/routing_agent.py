@@ -13,6 +13,7 @@ from .registry import AgentRegistry
 from .state import GraphState
 from ..utils.logger import get_logger
 from .. import config
+from ..prompts import ROUTING_ANALYSIS_PROMPT, format_conversation_history
 
 logger = get_logger('arc_fusion.agents.routing')
 
@@ -119,65 +120,13 @@ class RoutingService:
             return updated_state
     
     def _create_routing_prompt(self, query: str, conversation_history: list = None) -> str:
-        """Create the prompt for intent classification."""
+        """Create the prompt for intent classification using centralized prompts."""
+        formatted_history = format_conversation_history(conversation_history) if conversation_history else ""
         
-        prompt_parts = [
-            "You are a query analysis agent for an AI research assistant. Your job is to classify user queries into the appropriate action category."
-        ]
-        
-        # Add conversation history if available
-        if conversation_history:
-            prompt_parts.extend([
-                "\n## CONVERSATION HISTORY",
-                "Previous conversation context (helps understand follow-up questions and references):"
-            ])
-            
-            for msg in conversation_history[-10:]:  # Last 10 messages
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                if role == "user":
-                    prompt_parts.append(f"User: {content}")
-                elif role == "assistant":
-                    prompt_parts.append(f"Assistant: {content}")
-            
-            prompt_parts.append("\n---")
-        
-        prompt_parts.extend([
-            "\nAnalyze this user query and classify it into ONE of these categories:",
-            "",
-            "**retrieve_corpus**: Query can be answered from academic papers in our database",
-            "- Examples: \"What did Zhang et al. report about prompt templates?\", \"Which method achieved highest accuracy in the Spider dataset?\", \"Explain the methodology used in paper X\"",
-            "- ALSO INCLUDES general topic questions that could be found in academic papers: \"What are SQL challenges?\", \"What methods exist for text-to-SQL?\", \"How does neural machine translation work?\"",
-            "- INCLUDES follow-up questions that refer to previous answers when the context is clear",
-            "",
-            "**search_web**: Query requires current/external information not in papers",
-            "- When user explicitly requests web search: \"Search online for...\", \"Look up on the web...\"",
-            "",
-            "**corpus_and_web_search**: Query explicitly asks to combine internal knowledge with web search results.",
-            "- Examples: \"Compare the findings in your documents with what's on the web about text-to-sql\", \"What are text-to-SQL challenges based on your internal knowledge and your search on internet?\"",
-            "",
-            "**clarify**: Query is too vague or ambiguous to process AND lacks sufficient context",
-            "- Examples: \"How many examples are enough?\" (without specifying for what task), \"What's the best method?\" (without domain context), \"How does it work?\" (without specifying what \"it\" refers to)",
-            "- Missing critical context that makes the query unanswerable even with conversation history",
-            "",
-            "**end**: Conversation ending or greeting",
-            "- Examples: \"thanks\", \"goodbye\", \"that's all\", \"hello\"",
-            "",
-            "IMPORTANT: ",
-            "- General topic questions about research domains should be classified as \"retrieve_corpus\", not \"clarify\"",
-            "- Follow-up questions with clear context from conversation history should be classified normally, not as \"clarify\"",
-            "- Only use \"clarify\" for genuinely ambiguous queries that lack essential context even with conversation history",
-            "",
-            f"Current User Query: \"{query}\"",
-            "",
-            "Respond with ONLY the category name (retrieve_corpus, search_web, corpus_and_web_search, clarify, or end) followed by a confidence score (0-1).",
-            "",
-            "Format: INTENT: <category>",
-            "CONFIDENCE: <score>",
-            "REASONING: <brief explanation>"
-        ])
-        
-        return "\n".join(prompt_parts)
+        return ROUTING_ANALYSIS_PROMPT.format(
+            conversation_history=formatted_history,
+            query=query
+        )
     
     def _parse_intent_response(self, response_text: str) -> str:
         """Parse the LLM response to extract intent."""

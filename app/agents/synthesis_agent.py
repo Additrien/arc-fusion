@@ -15,6 +15,12 @@ from .state import GraphState
 from ..utils.logger import get_logger
 from ..utils.performance import time_async_function, time_async_block
 from .. import config
+from ..prompts import (
+    SYNTHESIS_PROMPT_HEADER, SYNTHESIS_CONVERSATION_HISTORY_SECTION,
+    SYNTHESIS_DOCUMENT_CONTEXT_SECTION, SYNTHESIS_WEB_CONTEXT_SECTION,
+    SYNTHESIS_INSTRUCTIONS, SYNTHESIS_NO_CONTEXT_SECTION,
+    format_conversation_history, format_document_context, format_web_context
+)
 
 logger = get_logger('arc_fusion.agents.synthesis')
 
@@ -159,7 +165,7 @@ class SynthesisService:
     
     def _create_synthesis_prompt(self, query: str, context_info: Dict[str, Any], conversation_history: List[Dict[str, Any]] = None) -> str:
         """
-        Create the synthesis prompt for Gemini Pro.
+        Create the synthesis prompt for Gemini Pro using centralized prompts.
         
         Args:
             query: User's original query
@@ -169,73 +175,41 @@ class SynthesisService:
         Returns:
             Formatted prompt for response generation
         """
+        prompt_parts = [SYNTHESIS_PROMPT_HEADER]
         
-        prompt_parts = [
-            "You are an expert research assistant. Your task is to provide a comprehensive, accurate answer to the user's question using the provided context."
-        ]
-        
-        # Add conversation history if available for follow-up questions
+        # Add conversation history section if available
         if conversation_history:
-            prompt_parts.extend([
-                "\n## CONVERSATION HISTORY",
-                "Here is the previous conversation for context (this helps you understand follow-up questions and references):"
-            ])
-            
-            for i, msg in enumerate(conversation_history[-10:]):  # Last 10 messages
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                if role == "user":
-                    prompt_parts.append(f"\n**User**: {content}")
-                elif role == "assistant":
-                    prompt_parts.append(f"\n**Assistant**: {content}")
-            
-            prompt_parts.append("\n---")
+            formatted_history = format_conversation_history(conversation_history)
+            prompt_parts.append(SYNTHESIS_CONVERSATION_HISTORY_SECTION.format(
+                conversation_history=formatted_history
+            ))
         
-        # Add context sections
+        # Add document context section if available
         if context_info["has_document_context"]:
-            prompt_parts.extend([
-                "\n## DOCUMENT CONTEXT",
-                "The following information is from academic papers and documents in our database:"
-            ])
-            
-            for i, chunk in enumerate(context_info["document_chunks"], 1):
-                source = context_info["document_sources"][i-1] if i-1 < len(context_info["document_sources"]) else {}
-                filename = source.get("filename", "Unknown Document")
-                prompt_parts.append(f"\n**Document {i}** ({filename}):\n{chunk}")
+            formatted_doc_context = format_document_context(
+                context_info["document_chunks"], 
+                context_info["document_sources"]
+            )
+            prompt_parts.append(SYNTHESIS_DOCUMENT_CONTEXT_SECTION.format(
+                document_context=formatted_doc_context
+            ))
         
+        # Add web context section if available
         if context_info["has_web_context"]:
-            prompt_parts.extend([
-                "\n## WEB SEARCH CONTEXT",
-                "The following information is from recent web search results:"
-            ])
-            
-            for i, chunk in enumerate(context_info["web_content"], 1):
-                source = context_info["web_sources"][i-1] if i-1 < len(context_info["web_sources"]) else {}
-                title = source.get("title", "Unknown Source")
-                prompt_parts.append(f"\n**Web Source {i}** ({title}):\n{chunk}")
+            formatted_web_context = format_web_context(
+                context_info["web_content"], 
+                context_info["web_sources"]
+            )
+            prompt_parts.append(SYNTHESIS_WEB_CONTEXT_SECTION.format(
+                web_context=formatted_web_context
+            ))
         
-        # Add guidelines
-        prompt_parts.extend([
-            f"\n## USER QUESTION",
-            f"{query}",
-            "\n## INSTRUCTIONS",
-            "1. Provide a comprehensive answer based on the available context",
-            "2. Be specific and cite information when referencing sources",
-            "3. If information is conflicting, acknowledge the discrepancy",
-            "4. If the context doesn't fully answer the question, say so explicitly",
-            "5. For academic content, be precise about methodologies, results, and conclusions",
-            "6. Use clear, professional language appropriate for the topic",
-            "",
-            "IMPORTANT: Only use information from the provided context. Do not add information from your training data that is not supported by the context."
-        ])
+        # Add instructions section
+        prompt_parts.append(SYNTHESIS_INSTRUCTIONS.format(query=query))
         
         # Handle empty context case
         if not context_info["has_document_context"] and not context_info["has_web_context"]:
-            prompt_parts.extend([
-                "\n## NO CONTEXT AVAILABLE",
-                "No relevant information was found in our documents or web search.",
-                "Provide a helpful response explaining that the information is not available and suggest alternative approaches."
-            ])
+            prompt_parts.append(SYNTHESIS_NO_CONTEXT_SECTION)
         
         return "\n".join(prompt_parts)
     
